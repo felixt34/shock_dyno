@@ -11,10 +11,15 @@ namespace {
 Vfd vfd;
 TaskHandle_t motorTask = nullptr;
 
+int safetyOpenCount = 0;
+
 void supervise() {
+  // Debounced: contact bounce or a spike on the cable must not trip a test. The hard-wired
+  // safety circuit removes motor power by itself, so this short delay does not affect safety.
+  safetyOpenCount = safetyOk() ? 0 : safetyOpenCount + 1;
   if (sh.state != proto::ST_RUNNING) return;
   uint32_t now = millis();
-  if (!safetyOk())                                            tripFault(proto::FAULT_SAFETY_OPEN);
+  if (safetyOpenCount >= SAFETY_DEBOUNCE)                     tripFault(proto::FAULT_SAFETY_OPEN);
   else if ((int32_t)(now - sh.lastPcMs) > HEARTBEAT_TIMEOUT_MS) tripFault(proto::FAULT_HEARTBEAT);
   else if (!sh.adcOk || (int32_t)(now - sh.lastSampleMs) > ADC_TIMEOUT_MS) tripFault(proto::FAULT_ADC_TIMEOUT);
   else if (sh.vfdOk && sh.vfdStatus == VFD_STATUS_FAULT)      tripFault(proto::FAULT_VFD_FAULT);

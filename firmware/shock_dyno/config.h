@@ -52,10 +52,13 @@
 #define VFD_MAX_FREQ_CHZ      7000      // refuse commands above 70.00 Hz
 
 // ---------- Safety circuit state input ----------
-// Needs an optocoupler from the 24 V safety loop and an external pull resistor
-// (GPIO35 is input-only and has no internal pull-up/down).
+// Dry (potential-free) relay contact from the drive, between GPIO35 and GND.
+// External 1 k pull-up to 3V3 and 100 nF to GND at the pin (GPIO35 has no internal pull-up).
+// Use the contact that is CLOSED when the safety circuit is armed: an open contact
+// or a broken wire then reads HIGH and stops the motor.
 #define PIN_SAFETY            35
-#define SAFETY_OK_LEVEL       HIGH      // level read when the safety circuit is closed (armed)
+#define SAFETY_OK_LEVEL       LOW       // level read when the safety circuit is closed (armed)
+#define SAFETY_DEBOUNCE       3         // consecutive "open" readings (20 ms apart) before tripping
 
 // ---------- Supervision ----------
 #define HEARTBEAT_TIMEOUT_MS  500       // motor stops if the PC is silent this long

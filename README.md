@@ -11,7 +11,7 @@
 1. Arduino IDE with the **esp32** board package. Open `firmware/shock_dyno/shock_dyno.ino`, board "ESP32 Dev Module", upload. (PlatformIO also works: `firmware/platformio.ini`.)
 2. Everything hardware-specific is in `config.h`. **Check before the first run:**
    - `VFD_*` — baud rate, format, slave address and register numbers. The register numbers follow the INVT GD350 convention and must be checked against the TD350 manual (or replaced with the ones from your working test code).
-   - `PIN_SAFETY` (GPIO35) and `SAFETY_OK_LEVEL` — the input that reads the safety circuit. It needs an optocoupler and an external pull resistor.
+   - `PIN_SAFETY` (GPIO35): a dry relay contact from the drive between GPIO35 and GND, with a 1 kΩ pull-up to 3V3 and 100 nF to GND. Use the contact that is closed when the safety circuit is armed (`SAFETY_OK_LEVEL` = LOW), so a broken wire also stops the motor.
    - ADC pins match the proto board (two SPI buses).
 
 The motor only runs when all of these hold; any violation latches a fault and stops the drive:
