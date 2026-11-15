@@ -1,0 +1,70 @@
+// DynamiX shock dyno - hardware and tuning configuration
+#pragma once
+#include <stdint.h>
+
+// ---------- PC link (USB serial) ----------
+#define PC_BAUD               460800
+
+// ---------- ADS1256 #1 : force (SPI bus 1 / VSPI) ----------
+#define PIN_ADC1_SCK          18
+#define PIN_ADC1_MISO         19
+#define PIN_ADC1_MOSI         23
+#define PIN_ADC1_CS           25
+#define PIN_ADC1_DRDY         5
+#define PIN_ADC1_SYNC         27
+#define PIN_ADC1_RST          26
+
+// ---------- ADS1256 #2 : position (SPI bus 2 / HSPI) ----------
+#define PIN_ADC2_SCK          14
+#define PIN_ADC2_MISO         34
+#define PIN_ADC2_MOSI         13
+#define PIN_ADC2_CS           33
+#define PIN_ADC2_DRDY         32
+#define PIN_ADC2_SYNC         22
+#define PIN_ADC2_RST          21
+
+#define ADC_SPI_HZ            1000000   // must stay below 1.9 MHz (fCLKIN / 4)
+#define ADC_DRATE             0x92      // 500 SPS  (0xA1 = 1000 SPS, 0x82 = 100 SPS)
+#define ADC1_ADCON            0x06      // force:    PGA 64, clock out off
+#define ADC2_ADCON            0x00      // position: PGA 1,  clock out off
+#define ADC_MUX               0x01      // AIN0 (+) / AIN1 (-)  = board terminals AIN1 / AIN2
+#define ADC_STATUS            0x06      // MSB first, auto-calibration on, input buffer on
+
+// ---------- MAX485 / VFD (Modbus RTU on UART2) ----------
+#define PIN_RS485_TX          17
+#define PIN_RS485_RX          16
+#define PIN_RS485_DE          4
+#define VFD_BAUD              19200
+#define VFD_SERIAL_CONFIG     SERIAL_8N1
+#define VFD_ADDRESS           1
+#define VFD_TIMEOUT_MS        100
+
+// TD350 registers (INVT GD350 convention). CHECK THESE AGAINST THE TD350 MANUAL, CHAPTER 9.
+#define VFD_REG_CONTROL       0x2000
+#define VFD_REG_FREQ_SET      0x2001    // 0.01 Hz units
+#define VFD_REG_STATUS        0x2100
+#define VFD_REG_FAULT         0x2102
+#define VFD_REG_FREQ_OUT      0x3000    // 0.01 Hz units
+#define VFD_CMD_RUN_FWD       0x0001
+#define VFD_CMD_STOP          0x0005
+#define VFD_CMD_FAULT_RESET   0x0007
+#define VFD_STATUS_FAULT      0x0004
+#define VFD_MAX_FREQ_CHZ      7000      // refuse commands above 70.00 Hz
+
+// ---------- Safety circuit state input ----------
+// Needs an optocoupler from the 24 V safety loop and an external pull resistor
+// (GPIO35 is input-only and has no internal pull-up/down).
+#define PIN_SAFETY            35
+#define SAFETY_OK_LEVEL       HIGH      // level read when the safety circuit is closed (armed)
+
+// ---------- Supervision ----------
+#define HEARTBEAT_TIMEOUT_MS  500       // motor stops if the PC is silent this long
+#define ADC_TIMEOUT_MS        100       // motor stops if samples stop arriving
+#define FORCE_LIMIT_SAMPLES   3         // consecutive samples beyond the limit before tripping
+#define VFD_COMM_FAIL_LIMIT   5         // consecutive Modbus failures before "VFD comm lost"
+
+// ---------- Streaming ----------
+#define POINTS_PER_PACKET     20        // 20 x 10 bytes = 200-byte payload
+#define PACKET_FLUSH_MS       20
+#define STATUS_PERIOD_MS      100
+#define SAMPLE_QUEUE_LEN      512

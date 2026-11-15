@@ -1,0 +1,9 @@
+# Shock dyno test sequence
+# warmup, speed mm/s, seconds   |   cycles, speed mm/s, number of cycles
+warmup, 50, 20
+cycles, 15, 3
+cycles, 25, 3
+cycles, 50, 3
+cycles, 100, 3
+cycles, 250, 3
+cycles, 500, 3
