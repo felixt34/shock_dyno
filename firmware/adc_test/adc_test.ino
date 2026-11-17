@@ -5,18 +5,23 @@
 #include <Arduino.h>
 #include <SPI.h>
 
+// Input buffer of the force ADC (STATUS register). 0x06 = buffer on (as in the main firmware),
+// 0x02 = buffer off. With the buffer on, both inputs must stay between 0 and AVDD - 2 V (about 3 V).
+const uint8_t FORCE_STATUS = 0x06;
+
 struct Adc {
   const char* name;
   SPIClass* spi;
   int sck, miso, mosi, cs, drdy, sync, rst;
   uint8_t adcon;      // PGA setting used by the main firmware
+  uint8_t status;     // input buffer on (0x06) or off (0x02)
   bool ok;
 };
 
 SPIClass spiA(VSPI), spiB(HSPI);
 Adc adcs[2] = {
-  { "ADS #1 (force)",    &spiA, 18, 19, 23, 25,  5, 27, 26, 0x06, false },
-  { "ADS #2 (position)", &spiB, 14, 34, 13, 33, 32, 22, 21, 0x00, false },
+  { "ADS #1 (force)",    &spiA, 18, 19, 23, 25,  5, 27, 26, 0x06, FORCE_STATUS, false },
+  { "ADS #2 (position)", &spiB, 14, 34, 13, 33, 32, 22, 21, 0x00, 0x06, false },
 };
 
 const SPISettings kSpi(1000000, MSBFIRST, SPI_MODE1);
@@ -108,7 +113,7 @@ void test(Adc& a) {
   if ((r[0] >> 4) != 3) { Serial.printf("   Chip ID %d instead of 3: wrong chip or bits shifted (SCK/DIN wiring, SPI mode) -> FAIL\n", r[0] >> 4); return; }
   Serial.println("   Chip ID 3 (ADS1256)  -> OK");
 
-  const uint8_t vals[4] = { 0x06, 0x01, a.adcon, 0x92 };
+  const uint8_t vals[4] = { a.status, 0x01, a.adcon, 0x92 };
   for (int i = 0; i < 4; i++) {
     if (waitDrdy(a, 1000) < 0) { Serial.printf("4. DRDY stuck HIGH before writing register %d -> FAIL\n", i); return; }
     wreg(a, i, vals[i]);
@@ -116,8 +121,8 @@ void test(Adc& a) {
   }
   waitDrdy(a, 1000);
   uint8_t s = rreg(a, 0), m = rreg(a, 1), c = rreg(a, 2), d = rreg(a, 3);
-  Serial.printf("4. Written STATUS 06 MUX 01 ADCON %02X DRATE 92, read back %02X %02X %02X %02X", a.adcon, s, m, c, d);
-  if ((s & 0x0F) != 0x06 || m != 0x01 || (c & 0x07) != (a.adcon & 0x07) || d != 0x92) {
+  Serial.printf("4. Written STATUS %02X MUX 01 ADCON %02X DRATE 92, read back %02X %02X %02X %02X", a.status, a.adcon, s, m, c, d);
+  if ((s & 0x0E) != (a.status & 0x0E) || m != 0x01 || (c & 0x07) != (a.adcon & 0x07) || d != 0x92) {
     Serial.println("  -> FAIL (DIN or SCK wiring)");
     return;
   }
@@ -155,7 +160,7 @@ void loop() {
     int32_t v = readData(a);
     double gain = (a.adcon & 0x07) == 6 ? 64.0 : 1.0;
     double volts = v * (2.0 * 2.5 / gain) / 8388608.0;
-    Serial.printf(" %9ld  %+10.6f V |", (long)v, volts);
+    Serial.printf(" %9ld  %+11.7f V |", (long)v, volts);
   }
   Serial.println();
   delay(250);
