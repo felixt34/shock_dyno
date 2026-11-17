@@ -44,6 +44,8 @@ namespace ShockDyno.Core
         public double FilterCutoffHz { get; set; }
         [Category("5. Analysis"), Description("Fixed delay of the position sensor relative to the load cell (ms). Position is advanced by this much.")]
         public double LvitDelayMs { get; set; }
+        [Category("5. Analysis"), Description("True: speed graphs use the speed magnitude, so compression and rebound are both at positive speed (force keeps its sign: compression above zero, rebound below). False: signed velocity, + compression.")]
+        public bool AbsoluteSpeed { get; set; }
 
         [Category("6. Sensor calibration"), Description("Newtons per ADC count. Negative if compression reads negative. Set from the Sensor calibration window.")]
         public double ForceNPerCount { get; set; }
@@ -62,7 +64,7 @@ namespace ShockDyno.Core
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
             CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2;
             ForceLimitN = 3000;
-            FilterCutoffHz = 40; LvitDelayMs = 0;
+            FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.
             ForceNPerCount = 0.0045665; ForceZeroCounts = 0;
             PositionMmPerCount = 4.8447e-5; PositionZeroCounts = 0;

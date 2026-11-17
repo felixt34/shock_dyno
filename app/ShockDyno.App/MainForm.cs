@@ -75,6 +75,8 @@ namespace ShockDyno.App
             if (selfTest != null) Shown += (s, e) => { _ports.SelectedItem = SimulatorPort; ToggleConnection(); StartTest(); };
         }
 
+        readonly CheckBox _absSpeed = new CheckBox { Text = "Speed graphs: positive speed in both compression and rebound", AutoSize = true, Margin = new Padding(4, 5, 3, 0) };
+
         static Label Value() { return new Label { Text = "-", Font = new Font("Segoe UI", 9f, FontStyle.Bold), AutoEllipsis = true }; }
         static string LastSequencePath { get { return Path.Combine(Path.GetDirectoryName(Settings.DefaultPath), "last.seq"); } }
 
@@ -136,9 +138,16 @@ namespace ShockDyno.App
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 346));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 270));
-            var centre = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-            centre.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); centre.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
-            centre.Controls.Add(_tabs, 0, 0); centre.Controls.Add(_log, 0, 1);
+            var centre = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+            centre.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); centre.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); centre.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
+            _absSpeed.Checked = _set.AbsoluteSpeed;
+            _absSpeed.CheckedChanged += (s, e) =>
+            {
+                _set.AbsoluteSpeed = _absSpeed.Checked;
+                try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
+                RefreshAnalysis();
+            };
+            centre.Controls.Add(_absSpeed, 0, 0); centre.Controls.Add(_tabs, 0, 1); centre.Controls.Add(_log, 0, 2);
             root.Controls.Add(left, 0, 0); root.Controls.Add(centre, 1, 0); root.Controls.Add(right, 2, 0);
 
             var status = new StatusStrip();
@@ -474,13 +483,13 @@ namespace ShockDyno.App
                 t.Tick += (s, e) =>
                 {
                     t.Stop();
-                    foreach (int tab in new[] { 2, 0 })
+                    foreach (int tab in new[] { 1, 2, 0 })
                     {
                         _tabs.SelectedIndex = tab; Refresh(); Application.DoEvents();
                         using (var bmp = new Bitmap(ClientSize.Width, ClientSize.Height))
                         {
                             using (Graphics g = Graphics.FromImage(bmp)) g.CopyFromScreen(PointToScreen(Point.Empty), Point.Empty, ClientSize);
-                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + "_peak.png");
+                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + (tab == 1 ? "_fv.png" : "_peak.png"));
                         }
                     }
                     Close();
@@ -539,7 +548,8 @@ namespace ShockDyno.App
         {
             UnitSystem u = _set.Units;
             string f = "Force (" + Units.ForceUnit(u) + "),  + compression", x = "Position above bottom dead centre (" + Units.LengthUnit(u) + ")";
-            string v = "Velocity (" + Units.SpeedUnit(u) + "),  + compression";
+            string v = _set.AbsoluteSpeed ? "Speed (" + Units.SpeedUnit(u) + "),  compression and rebound both +"
+                                          : "Velocity (" + Units.SpeedUnit(u) + "),  + compression";
             _plotFx.XLabel = x; _plotFx.YLabel = f;
             _plotFv.XLabel = v; _plotFv.YLabel = f; _plotFv.Title = "Force vs velocity (last cycle of each speed)";
             _plotPeak.XLabel = "Peak " + v.Substring(0, 1).ToLower() + v.Substring(1); _plotPeak.YLabel = "Force at peak velocity (" + Units.ForceUnit(u) + ")";
@@ -593,11 +603,29 @@ namespace ShockDyno.App
                 HistoryItem h = tests[t];
                 Color testColor = PlotControl.Palette[t % PlotControl.Palette.Length];
                 bool first = true;
-                var px = new List<double>(); var py = new List<double>();
-                foreach (StepResult r in h.Results.OrderByDescending(r => r.TargetSpeed)) { px.Add(Units.Length(r.RebPeakVel, u)); py.Add(Units.Force(r.RebForceAtPeakVel, u)); }
-                px.Add(0); py.Add(0);
-                foreach (StepResult r in h.Results.OrderBy(r => r.TargetSpeed)) { px.Add(Units.Length(r.CompPeakVel, u)); py.Add(Units.Force(r.CompForceAtPeakVel, u)); }
-                _plotPeak.Series.Add(new PlotSeries { X = px.ToArray(), Y = py.ToArray(), Color = testColor, Markers = true, Name = h.Display, Width = 2f });
+                bool abs = _set.AbsoluteSpeed;
+                Func<double, double> sx = v => Units.Length(abs ? Math.Abs(v) : v, u);
+                if (abs)
+                {
+                    // Two branches from the origin: compression above zero force, rebound below, both at positive speed.
+                    var cx = new List<double> { 0 }; var cy = new List<double> { 0 };
+                    var rx = new List<double> { 0 }; var ry = new List<double> { 0 };
+                    foreach (StepResult r in h.Results.OrderBy(r => r.TargetSpeed))
+                    {
+                        cx.Add(sx(r.CompPeakVel)); cy.Add(Units.Force(r.CompForceAtPeakVel, u));
+                        rx.Add(sx(r.RebPeakVel)); ry.Add(Units.Force(r.RebForceAtPeakVel, u));
+                    }
+                    _plotPeak.Series.Add(new PlotSeries { X = cx.ToArray(), Y = cy.ToArray(), Color = testColor, Markers = true, Name = h.Display, Width = 2f });
+                    _plotPeak.Series.Add(new PlotSeries { X = rx.ToArray(), Y = ry.ToArray(), Color = testColor, Markers = true, Width = 2f });
+                }
+                else
+                {
+                    var px = new List<double>(); var py = new List<double>();
+                    foreach (StepResult r in h.Results.OrderByDescending(r => r.TargetSpeed)) { px.Add(sx(r.RebPeakVel)); py.Add(Units.Force(r.RebForceAtPeakVel, u)); }
+                    px.Add(0); py.Add(0);
+                    foreach (StepResult r in h.Results.OrderBy(r => r.TargetSpeed)) { px.Add(sx(r.CompPeakVel)); py.Add(Units.Force(r.CompForceAtPeakVel, u)); }
+                    _plotPeak.Series.Add(new PlotSeries { X = px.ToArray(), Y = py.ToArray(), Color = testColor, Markers = true, Name = h.Display, Width = 2f });
+                }
                 foreach (StepResult r in h.Results)
                 {
                     ProcessedCycle c = r.Cycles[r.Cycles.Count - 1];
@@ -605,7 +633,7 @@ namespace ShockDyno.App
                     string name = single ? SpeedName(r.TargetSpeed) : (first ? h.Display : null);
                     first = false;
                     _plotFx.Series.Add(new PlotSeries { X = Conv(c.X, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
-                    _plotFv.Series.Add(new PlotSeries { X = Conv(c.V, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
+                    _plotFv.Series.Add(new PlotSeries { X = Conv(c.V, sx), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
                 }
             }
             if (tests.Count > 0)
@@ -642,6 +670,7 @@ namespace ShockDyno.App
             using (var f = new SettingsForm(_set)) f.ShowDialog(this);
             try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
             SendLimits();
+            _absSpeed.Checked = _set.AbsoluteSpeed;
             RefreshHistory();
         }
 
