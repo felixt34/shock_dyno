@@ -9,9 +9,11 @@ const uint32_t T6_US = 10;   // >= 50 master-clock periods (6.5 us at 7.68 MHz) 
 }
 
 void Ads1256::beginPins() {
-  digitalWrite(p_.cs, HIGH);   pinMode(p_.cs, OUTPUT);
-  digitalWrite(p_.sync, HIGH); pinMode(p_.sync, OUTPUT);
-  digitalWrite(p_.rst, HIGH);  pinMode(p_.rst, OUTPUT);
+  // pinMode first: on the ESP32 Arduino core 3.x a digitalWrite to a pin that is not yet
+  // configured is ignored, and pinMode(OUTPUT) then starts the pin LOW (SYNC low = ADS1256 powered down).
+  pinMode(p_.cs, OUTPUT);   digitalWrite(p_.cs, HIGH);
+  pinMode(p_.sync, OUTPUT); digitalWrite(p_.sync, HIGH);
+  pinMode(p_.rst, OUTPUT);  digitalWrite(p_.rst, HIGH);
   pinMode(p_.drdy, INPUT_PULLUP);   // as in the original DynamiX code: a missing board then reads "not ready"
   spi_.begin(p_.sck, p_.miso, p_.mosi, -1);
 }

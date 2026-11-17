@@ -137,9 +137,9 @@ void setup() {
   delay(1500);
   Serial.println("\n\nDynamiX ADS1256 test");
   for (Adc& a : adcs) {   // all chip selects / resets / syncs high before any SPI traffic
-    digitalWrite(a.cs, HIGH);   pinMode(a.cs, OUTPUT);
-    digitalWrite(a.sync, HIGH); pinMode(a.sync, OUTPUT);
-    digitalWrite(a.rst, HIGH);  pinMode(a.rst, OUTPUT);
+    pinMode(a.cs, OUTPUT);   digitalWrite(a.cs, HIGH);    // pinMode first (ESP32 core 3.x ignores
+    pinMode(a.sync, OUTPUT); digitalWrite(a.sync, HIGH);  // writes to unconfigured pins)
+    pinMode(a.rst, OUTPUT);  digitalWrite(a.rst, HIGH);
     pinMode(a.drdy, INPUT_PULLUP);
     a.spi->begin(a.sck, a.miso, a.mosi, -1);
   }

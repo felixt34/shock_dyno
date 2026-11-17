@@ -11,8 +11,8 @@ uint16_t modbusCrc(const uint8_t* data, size_t len) {
 }
 
 void Vfd::begin() {
-  digitalWrite(PIN_RS485_DE, LOW);        // receive
-  pinMode(PIN_RS485_DE, OUTPUT);
+  pinMode(PIN_RS485_DE, OUTPUT);         // pinMode before digitalWrite (ESP32 core 3.x)
+  digitalWrite(PIN_RS485_DE, LOW);       // receive
   Serial2.begin(VFD_BAUD, VFD_SERIAL_CONFIG, PIN_RS485_RX, PIN_RS485_TX);
 }
 
