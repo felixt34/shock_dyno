@@ -15,18 +15,22 @@
     <Optimize Condition=" '$(Configuration)' == 'Release' ">true</Optimize>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="*.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\ShockDyno.Core\ShockDyno.Core.csproj">
-      <Project>{6B0C6A51-3E1D-4B7E-9C55-0D6D2A1F0A01}</Project>
-      <Name>ShockDyno.Core</Name>
-    </ProjectReference>
+    <!-- Core sources compiled straight in, so the program never depends on a separately built ShockDyno.Core.dll -->
+    <Compile Include="..\ShockDyno.Core\*.cs">
+      <Link>Core\%(Filename)%(Extension)</Link>
+    </Compile>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
