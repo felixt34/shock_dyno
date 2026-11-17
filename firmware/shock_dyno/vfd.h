@@ -7,7 +7,11 @@ class Vfd {
   void begin();
   bool writeRegister(uint16_t reg, uint16_t value);
   bool readRegister(uint16_t reg, uint16_t& value);
+  // True when the last request was answered with a Modbus exception (the drive is
+  // there and talking, but rejected that register or value).
+  bool lastWasException() const { return exception_; }
  private:
+  bool exception_ = false;
   bool transact(const uint8_t* req, size_t reqLen, uint8_t* resp, size_t respLen);
 };
 

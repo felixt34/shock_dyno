@@ -84,7 +84,7 @@ void test(Adc& a) {
   a.ok = false;
 
   Serial.printf("1. DRDY level before reset: %s\n", digitalRead(a.drdy) ? "HIGH" : "LOW");
-  digitalWrite(a.rst, LOW); delay(2); digitalWrite(a.rst, HIGH); delay(5);
+  digitalWrite(a.rst, LOW); delay(10); digitalWrite(a.rst, HIGH); delay(100);
   long t = waitDrdy(a, 1000);
   if (t < 0) {
     Serial.println("2. DRDY never went LOW after reset  -> FAIL");
@@ -108,8 +108,13 @@ void test(Adc& a) {
   if ((r[0] >> 4) != 3) { Serial.printf("   Chip ID %d instead of 3: wrong chip or bits shifted (SCK/DIN wiring, SPI mode) -> FAIL\n", r[0] >> 4); return; }
   Serial.println("   Chip ID 3 (ADS1256)  -> OK");
 
-  wreg(a, 0, 0x06); wreg(a, 1, 0x01); wreg(a, 2, a.adcon); wreg(a, 3, 0x92);
-  delay(1);
+  const uint8_t vals[4] = { 0x06, 0x01, a.adcon, 0x92 };
+  for (int i = 0; i < 4; i++) {
+    if (waitDrdy(a, 1000) < 0) { Serial.printf("4. DRDY stuck HIGH before writing register %d -> FAIL\n", i); return; }
+    wreg(a, i, vals[i]);
+    delay(5);
+  }
+  waitDrdy(a, 1000);
   uint8_t s = rreg(a, 0), m = rreg(a, 1), c = rreg(a, 2), d = rreg(a, 3);
   Serial.printf("4. Written STATUS 06 MUX 01 ADCON %02X DRATE 92, read back %02X %02X %02X %02X", a.adcon, s, m, c, d);
   if ((s & 0x0F) != 0x06 || m != 0x01 || (c & 0x07) != (a.adcon & 0x07) || d != 0x92) {
@@ -118,8 +123,9 @@ void test(Adc& a) {
   }
   Serial.println("  -> OK");
 
+  waitDrdy(a, 1000);
   cmd(a, 0xF0);  // SELFCAL
-  delay(5);
+  delay(20);
   t = waitDrdy(a, 2000);
   if (t < 0) { Serial.println("5. Self-calibration never finished -> FAIL"); return; }
   Serial.println("5. Self-calibration done -> OK");
@@ -134,7 +140,7 @@ void setup() {
     digitalWrite(a.cs, HIGH);   pinMode(a.cs, OUTPUT);
     digitalWrite(a.sync, HIGH); pinMode(a.sync, OUTPUT);
     digitalWrite(a.rst, HIGH);  pinMode(a.rst, OUTPUT);
-    pinMode(a.drdy, INPUT);
+    pinMode(a.drdy, INPUT_PULLUP);
     a.spi->begin(a.sck, a.miso, a.mosi, -1);
   }
   for (Adc& a : adcs) test(a);

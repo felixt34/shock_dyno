@@ -12,7 +12,7 @@ void Ads1256::beginPins() {
   digitalWrite(p_.cs, HIGH);   pinMode(p_.cs, OUTPUT);
   digitalWrite(p_.sync, HIGH); pinMode(p_.sync, OUTPUT);
   digitalWrite(p_.rst, HIGH);  pinMode(p_.rst, OUTPUT);
-  pinMode(p_.drdy, INPUT);
+  pinMode(p_.drdy, INPUT_PULLUP);   // as in the original DynamiX code: a missing board then reads "not ready"
   spi_.begin(p_.sck, p_.miso, p_.mosi, -1);
 }
 
@@ -58,25 +58,33 @@ uint8_t Ads1256::readRegister(uint8_t reg) {
   return v;
 }
 
+// Same order as the ADS1256 library used by the original DynamiX code, which is known to work
+// on these boards: every register access waits for DRDY low first, so nothing is written
+// while the chip is busy with an (auto-)calibration.
 bool Ads1256::configure(uint8_t status, uint8_t mux, uint8_t adcon, uint8_t drate) {
+  digitalWrite(p_.sync, HIGH);
   digitalWrite(p_.rst, LOW);
-  delay(2);
+  delay(10);
   digitalWrite(p_.rst, HIGH);
-  delay(5);
+  delay(100);
   if (!waitDrdyLow(1000)) return false;
   command(CMD_SDATAC);
   delay(1);
-  writeRegister(REG_STATUS, status);
-  writeRegister(REG_MUX, mux);
-  writeRegister(REG_ADCON, adcon);
-  writeRegister(REG_DRATE, drate);
-  delay(1);
+  const uint8_t regs[4] = { REG_STATUS, REG_MUX, REG_ADCON, REG_DRATE };
+  const uint8_t vals[4] = { status, mux, adcon, drate };
+  for (int i = 0; i < 4; i++) {
+    if (!waitDrdyLow(1000)) return false;
+    writeRegister(regs[i], vals[i]);
+    delay(5);                                   // auto-calibration starts; DRDY goes high meanwhile
+  }
   // Read back: the chip ID is the high nibble of STATUS (3 for an ADS1256).
+  if (!waitDrdyLow(1000)) return false;
   if ((readRegister(REG_STATUS) >> 4) != 0x3) return false;
   if (readRegister(REG_DRATE) != drate) return false;
   if ((readRegister(REG_ADCON) & 0x07) != (adcon & 0x07)) return false;
+  if (!waitDrdyLow(1000)) return false;
   command(CMD_SELFCAL);
-  delay(5);
+  delay(20);
   return waitDrdyLow(2000);
 }
 

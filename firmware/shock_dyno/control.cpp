@@ -30,6 +30,7 @@ void taskMain(void*) {
   uint16_t sentFreq = 0xFFFF;
   int fails = 0;
   uint32_t lastPoll = 0;
+  bool statusSupported = true, faultSupported = true;   // cleared if the drive rejects those registers
   auto note = [&](bool ok) {
     if (ok) { fails = 0; sh.vfdOk = true; return; }
     if (++fails >= VFD_COMM_FAIL_LIMIT) {
@@ -46,33 +47,41 @@ void taskMain(void*) {
       if (sentRun || sh.stopPending) {               // retried every pass until the drive confirms
         bool ok = vfd.writeRegister(VFD_REG_CONTROL, VFD_CMD_STOP);
         if (ok) { sentRun = false; sentFreq = 0xFFFF; sh.stopPending = false; }
-        note(ok);
+        note(ok || vfd.lastWasException());
       } else if (sh.vfdResetPending) {
         sh.vfdResetPending = false;
-        note(vfd.writeRegister(VFD_REG_CONTROL, VFD_CMD_FAULT_RESET));
+        bool ok = vfd.writeRegister(VFD_REG_CONTROL, VFD_CMD_FAULT_RESET);
+        note(ok || vfd.lastWasException());
       }
     } else {
       uint16_t f = sh.freqCmd;
       if (f != sentFreq) {
         bool ok = vfd.writeRegister(VFD_REG_FREQ_SET, f);
         if (ok) sentFreq = f;
-        note(ok);
+        note(ok || vfd.lastWasException());
       }
       if (!sentRun && sentFreq == f) {
         bool ok = vfd.writeRegister(VFD_REG_CONTROL, VFD_CMD_RUN_FWD);
         if (ok) sentRun = true;
-        note(ok);
+        note(ok || vfd.lastWasException());
       }
     }
 
     if (millis() - lastPoll >= 200) {
       lastPoll = millis();
       uint16_t v;
-      bool ok = vfd.readRegister(VFD_REG_STATUS, v);
-      if (ok) sh.vfdStatus = v;
-      if (ok && (ok = vfd.readRegister(VFD_REG_FREQ_OUT, v))) sh.vfdFreq = v;
-      if (ok && (ok = vfd.readRegister(VFD_REG_FAULT, v))) sh.vfdFault = v;
-      note(ok);
+      bool ok = vfd.readRegister(VFD_REG_FREQ_OUT, v);   // tested register: decides "drive answering"
+      bool alive = ok || vfd.lastWasException();
+      if (ok) sh.vfdFreq = v;
+      if (alive && statusSupported) {
+        if (vfd.readRegister(VFD_REG_STATUS, v)) sh.vfdStatus = v;
+        else if (vfd.lastWasException()) { statusSupported = false; sh.vfdStatus = 0; }
+      }
+      if (alive && faultSupported) {
+        if (vfd.readRegister(VFD_REG_FAULT, v)) sh.vfdFault = v;
+        else if (vfd.lastWasException()) { faultSupported = false; sh.vfdFault = 0; }
+      }
+      note(alive);
     }
   }
 }

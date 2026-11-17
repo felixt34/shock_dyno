@@ -10,7 +10,7 @@
 
 1. Arduino IDE with the **esp32** board package. Open `firmware/shock_dyno/shock_dyno.ino`, board "ESP32 Dev Module", upload. (PlatformIO also works: `firmware/platformio.ini`.)
 2. Everything hardware-specific is in `config.h`. **Check before the first run:**
-   - `VFD_*` — baud rate, format, slave address and register numbers. The register numbers follow the INVT GD350 convention and must be checked against the TD350 manual (or replaced with the ones from your working test code).
+   - `VFD_*` — 9600 baud 8E1, slave address 3, run/stop at 0x2000, set frequency at 0x800A (P00.10, RAM) and output frequency at 0x3000, as tested with the original DynamiX code. Status 0x2100, fault 0x2102 and fault reset (0x2000 = 7) are still untested; if the drive rejects them the firmware stops polling them.
    - `PIN_SAFETY` (GPIO35): a dry relay contact from the drive between GPIO35 and GND, with a 1 kΩ pull-up to 3V3 and 100 nF to GND. Use the contact that is closed when the safety circuit is armed (`SAFETY_OK_LEVEL` = LOW), so a broken wire also stops the motor.
    - ADC pins match the proto board (two SPI buses).
 

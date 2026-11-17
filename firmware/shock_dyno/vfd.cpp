@@ -17,19 +17,30 @@ void Vfd::begin() {
 }
 
 bool Vfd::transact(const uint8_t* req, size_t reqLen, uint8_t* resp, size_t respLen) {
+  exception_ = false;
   while (Serial2.available()) Serial2.read();          // drop stale bytes
   digitalWrite(PIN_RS485_DE, HIGH);
+  delayMicroseconds(10);
   Serial2.write(req, reqLen);
   Serial2.flush();                                     // wait until the last bit has left
+  delayMicroseconds(10);
   digitalWrite(PIN_RS485_DE, LOW);
   size_t got = 0;
   uint32_t t0 = millis();
   while (got < respLen && millis() - t0 < VFD_TIMEOUT_MS) {
-    if (Serial2.available()) resp[got++] = (uint8_t)Serial2.read();
-    else vTaskDelay(1);
+    if (Serial2.available()) {
+      resp[got++] = (uint8_t)Serial2.read();
+      if (got == 5 && resp[0] == req[0] && resp[1] == (req[1] | 0x80)) {   // exception reply
+        uint16_t crc = modbusCrc(resp, 3);
+        exception_ = resp[3] == (crc & 0xFF) && resp[4] == (crc >> 8);
+        break;
+      }
+    } else {
+      vTaskDelay(1);
+    }
   }
   vTaskDelay(pdMS_TO_TICKS(5));                        // inter-frame gap (> 3.5 characters)
-  if (got < respLen) return false;
+  if (exception_ || got < respLen) return false;
   uint16_t crc = modbusCrc(resp, respLen - 2);
   return resp[respLen - 2] == (crc & 0xFF) && resp[respLen - 1] == (crc >> 8) && resp[0] == req[0] && resp[1] == req[1];
 }

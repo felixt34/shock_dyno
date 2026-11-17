@@ -34,17 +34,19 @@
 #define PIN_RS485_TX          17
 #define PIN_RS485_RX          16
 #define PIN_RS485_DE          4
-#define VFD_BAUD              19200
-#define VFD_SERIAL_CONFIG     SERIAL_8N1
-#define VFD_ADDRESS           1
-#define VFD_TIMEOUT_MS        100
+#define VFD_BAUD              9600      // as tested in the original DynamiX code (TD350 P14)
+#define VFD_SERIAL_CONFIG     SERIAL_8E1
+#define VFD_ADDRESS           3
+#define VFD_TIMEOUT_MS        150
 
-// TD350 registers (INVT GD350 convention). CHECK THESE AGAINST THE TD350 MANUAL, CHAPTER 9.
+// TD350 registers. 0x2000 run/stop, 0x800A and 0x3000 are tested on the drive (original DynamiX code).
+// 0x2100 status, 0x2102 fault and the fault-reset command 7 follow the INVT GD350 convention and are NOT
+// tested yet; if the drive rejects them the firmware stops asking and carries on without them.
 #define VFD_REG_CONTROL       0x2000
-#define VFD_REG_FREQ_SET      0x2001    // 0.01 Hz units
+#define VFD_REG_FREQ_SET      0x800A    // P00.10 set frequency, 0.01 Hz; 0x8000 = RAM only (no EEPROM wear). Tested.
 #define VFD_REG_STATUS        0x2100
 #define VFD_REG_FAULT         0x2102
-#define VFD_REG_FREQ_OUT      0x3000    // 0.01 Hz units
+#define VFD_REG_FREQ_OUT      0x3000    // running frequency, 0.01 Hz units. Tested.
 #define VFD_CMD_RUN_FWD       0x0001
 #define VFD_CMD_STOP          0x0005
 #define VFD_CMD_FAULT_RESET   0x0007
