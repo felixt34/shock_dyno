@@ -19,6 +19,8 @@ namespace ShockDyno.App
             public string Path, Display;
             public TestRecord Record;
             public List<StepResult> Results;
+            public Color? Custom;          // colour chosen by the user (saved in the project folder)
+            public Color Shown;            // colour used in the graphs this time
             public override string ToString() { return Display; }
         }
 
@@ -59,7 +61,12 @@ namespace ShockDyno.App
         readonly PlotControl _plotFx = new PlotControl { Dock = DockStyle.Fill }, _plotFv = new PlotControl { Dock = DockStyle.Fill },
                              _plotPeak = new PlotControl { Dock = DockStyle.Fill }, _plotTimeF = new PlotControl { Dock = DockStyle.Fill },
                              _plotTimeX = new PlotControl { Dock = DockStyle.Fill }, _plotTimeV = new PlotControl { Dock = DockStyle.Fill };
-        readonly CheckedListBox _history = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false };
+        readonly ListView _history = new ListView { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = true, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.None, MultiSelect = true, HideSelection = false };
+        readonly ImageList _swatches = new ImageList { ImageSize = new Size(14, 14), ColorDepth = ColorDepth.Depth32Bit };
+        readonly Dictionary<int, int> _swatchIndex = new Dictionary<int, int>();
+        readonly ComboBox _project = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 284 };
+        bool _loadingProjects;
+        const string RunColorsFile = "run_colors.ini";
         readonly ToolStripStatusLabel _statusText = new ToolStripStatusLabel("Not connected");
         readonly Timer _uiTimer = new Timer { Interval = 200 };
         bool _loadingHistory;
@@ -78,6 +85,7 @@ namespace ShockDyno.App
             BuildUi();
             LoadSequenceIntoGrid(File.Exists(LastSequencePath) && selfTest == null ? SafeLoadSequence(LastSequencePath) : TestSequence.Default());
             RefreshPorts();
+            LoadProjects();
             RefreshHistory();
             UpdateUi();
             _uiTimer.Tick += (s, e) => UpdateUi();
@@ -95,7 +103,9 @@ namespace ShockDyno.App
         {
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("File");
-            file.DropDownItems.Add("Open data folder", null, (s, e) => { Directory.CreateDirectory(_set.DataFolder); System.Diagnostics.Process.Start(_set.DataFolder); });
+            file.DropDownItems.Add("Open project folder", null, (s, e) => { Directory.CreateDirectory(_set.RunsFolder); System.Diagnostics.Process.Start(_set.RunsFolder); });
+            file.DropDownItems.Add("Choose project folder...", null, (s, e) => BrowseProject());
+            file.DropDownItems.Add("New project...", null, (s, e) => NewProject());
             file.DropDownItems.Add("Export summary CSV of ticked tests...", null, (s, e) => ExportSummary());
             file.DropDownItems.Add("Exit", null, (s, e) => Close());
             var tools = new ToolStripMenuItem("Tools");
@@ -142,9 +152,32 @@ namespace ShockDyno.App
             _tabs.TabPages.Add(_liveTab);
 
             var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Padding = new Padding(4) };
-            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            right.Controls.Add(new Label { Text = "History - tick tests to overlay them", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9f, FontStyle.Bold) }, 0, 0);
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            var browse = new Button { Text = "Choose folder...", Width = 139, Height = 26 };
+            var newProject = new Button { Text = "New project...", Width = 139, Height = 26 };
+            browse.Click += (s, e) => BrowseProject();
+            newProject.Click += (s, e) => NewProject();
+            var head = new Panel { Dock = DockStyle.Fill };
+            head.Controls.Add(new Label { Text = "Project (where runs are saved and listed)", Location = new Point(0, 2), Size = new Size(290, 18), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
+            _project.Location = new Point(0, 22);
+            browse.Location = new Point(0, 50); newProject.Location = new Point(145, 50);
+            head.Controls.Add(_project); head.Controls.Add(browse); head.Controls.Add(newProject);
+            head.Controls.Add(new Label { Text = "Runs - tick to show in the graphs,\nright-click to change colours", Location = new Point(0, 86), Size = new Size(290, 36), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
+            right.Controls.Add(head, 0, 0);
             right.Controls.Add(_history, 0, 1);
+            _history.SmallImageList = _swatches;
+            _history.Columns.Add("Run", 260);
+            _history.Resize += (s, e) => { if (_history.Columns.Count > 0) _history.Columns[0].Width = Math.Max(100, _history.ClientSize.Width - 4); };
+            var menu2 = new ContextMenuStrip();
+            menu2.Items.Add("Change colour...", null, (s, e) => ChangeRunColour());
+            menu2.Items.Add("Automatic colour", null, (s, e) => SetRunColour(null));
+            menu2.Items.Add(new ToolStripSeparator());
+            menu2.Items.Add("Tick selected", null, (s, e) => TickSelected(true));
+            menu2.Items.Add("Untick selected", null, (s, e) => TickSelected(false));
+            menu2.Items.Add("Untick all", null, (s, e) => { _loadingHistory = true; foreach (ListViewItem it in _history.Items) it.Checked = false; _loadingHistory = false; RefreshAnalysis(); });
+            menu2.Items.Add(new ToolStripSeparator());
+            menu2.Items.Add("Open project folder", null, (s, e) => { Directory.CreateDirectory(_set.RunsFolder); System.Diagnostics.Process.Start(_set.RunsFolder); });
+            _history.ContextMenuStrip = menu2;
             var export = new Button { Text = "Export summary CSV...", Dock = DockStyle.Fill };
             export.Click += (s, e) => ExportSummary();
             right.Controls.Add(export, 0, 2);
@@ -152,7 +185,7 @@ namespace ShockDyno.App
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 346));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 270));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
             var centre = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
             centre.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); centre.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); centre.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
             _absSpeed.Checked = _set.AbsoluteSpeed;
@@ -177,7 +210,8 @@ namespace ShockDyno.App
             _tare.Click += (s, e) => Tare();
             _clear.Click += (s, e) => { if (_link != null) _link.ClearFault(); };
             _findBdc.Click += (s, e) => FindBdc();
-            _history.ItemCheck += (s, e) => { if (!_loadingHistory) BeginInvoke((Action)RefreshAnalysis); };
+            _history.ItemChecked += (s, e) => { if (!_loadingHistory) QueueRefreshAnalysis(); };
+            _project.SelectedIndexChanged += (s, e) => { if (!_loadingProjects && _project.SelectedItem is ProjectEntry) SetProject(((ProjectEntry)_project.SelectedItem).Path); };
             FormClosing += (s, e) => Shutdown();
         }
 
@@ -557,7 +591,7 @@ namespace ShockDyno.App
                 try
                 {
                     TestRecord rec = runner.BuildRecord(_name.Text.Trim(), _notes.Text.Trim());
-                    string path = TestRecord.MakeFileName(_set.DataFolder, rec.Name, rec.Date);
+                    string path = TestRecord.MakeFileName(_set.RunsFolder, rec.Name, rec.Date);
                     rec.Save(path);
                     Say("Saved " + Path.GetFileName(path));
                     RefreshHistory(path);
@@ -681,20 +715,26 @@ namespace ShockDyno.App
         // ------------------------------------------------------------------ history and analysis graphs
         void RefreshHistory(string checkPath = null)
         {
-            var wasChecked = new HashSet<string>(_history.CheckedItems.Cast<HistoryItem>().Select(h => h.Path));
+            var wasChecked = new HashSet<string>(CheckedRuns().Select(h => h.Path));
             if (checkPath != null) { wasChecked.Clear(); wasChecked.Add(checkPath); }
+            Dictionary<string, Color> colours = LoadRunColours();
             _loadingHistory = true;
+            _history.BeginUpdate();
             _history.Items.Clear();
             try
             {
-                if (Directory.Exists(_set.DataFolder))
-                    foreach (string path in Directory.GetFiles(_set.DataFolder, "*.csv").OrderByDescending(p => p))
+                if (Directory.Exists(_set.RunsFolder))
+                    foreach (string path in Directory.GetFiles(_set.RunsFolder, "*.csv").OrderByDescending(p => p))
                     {
+                        if (!TestRecord.IsTestFile(path)) continue;          // summaries, calibration history, other CSV files
                         string name = Path.GetFileNameWithoutExtension(path);
-                        _history.Items.Add(new HistoryItem { Path = path, Display = name }, wasChecked.Contains(path));
+                        var h = new HistoryItem { Path = path, Display = name };
+                        Color c; if (colours.TryGetValue(Path.GetFileName(path), out c)) h.Custom = c;
+                        _history.Items.Add(new ListViewItem(name) { Tag = h, Checked = wasChecked.Contains(path), ToolTipText = path });
                     }
             }
-            catch (Exception ex) { Say("Could not read the data folder: " + ex.Message); }
+            catch (Exception ex) { Say("Could not read the project folder: " + ex.Message); }
+            _history.EndUpdate();
             _loadingHistory = false;
             RefreshAnalysis();
         }
@@ -705,7 +745,7 @@ namespace ShockDyno.App
             UnitSystem u = _set.Units;
             SetLabels();
             var tests = new List<HistoryItem>();
-            foreach (HistoryItem h in _history.CheckedItems.Cast<HistoryItem>())
+            foreach (HistoryItem h in CheckedRuns())
             {
                 try
                 {
@@ -718,10 +758,11 @@ namespace ShockDyno.App
             _plotFx.Series.Clear(); _plotFv.Series.Clear(); _plotPeak.Series.Clear(); _plotTimeF.Series.Clear(); _plotTimeX.Series.Clear(); _plotTimeV.Series.Clear();
             _plotFx.Title = "Force vs position (last cycle of each speed)";
             bool single = tests.Count == 1;
+            AssignColours(tests);
             for (int t = 0; t < tests.Count; t++)
             {
                 HistoryItem h = tests[t];
-                Color testColor = PlotControl.Palette[t % PlotControl.Palette.Length];
+                Color testColor = h.Shown;
                 bool first = true;
                 bool abs = _set.AbsoluteSpeed;
                 Func<double, double> sx = v => Units.Length(abs ? Math.Abs(v) : v, u);
@@ -776,6 +817,200 @@ namespace ShockDyno.App
             foreach (PlotControl p in new[] { _plotFx, _plotFv, _plotPeak, _plotTimeF, _plotTimeX, _plotTimeV }) p.Invalidate();
         }
 
+        // ------------------------------------------------------------------ runs list: ticks and colours
+        IEnumerable<HistoryItem> CheckedRuns()
+        {
+            foreach (ListViewItem it in _history.Items) if (it.Checked) yield return (HistoryItem)it.Tag;
+        }
+
+        bool _refreshQueued;
+        void QueueRefreshAnalysis()                       // one refresh after a burst of tick changes
+        {
+            if (_refreshQueued) return;
+            _refreshQueued = true;
+            BeginInvoke((Action)(() => { _refreshQueued = false; RefreshAnalysis(); }));
+        }
+
+        /// <summary>Chosen colours first; the others get palette colours not already taken, in list order.</summary>
+        void AssignColours(List<HistoryItem> shown)
+        {
+            var used = new HashSet<int>(shown.Where(h => h.Custom.HasValue).Select(h => h.Custom.Value.ToArgb()));
+            int k = 0;
+            foreach (HistoryItem h in shown)
+            {
+                if (h.Custom.HasValue) { h.Shown = h.Custom.Value; continue; }
+                Color c = PlotControl.Palette[k % PlotControl.Palette.Length];
+                for (int tries = 0; tries < PlotControl.Palette.Length && used.Contains(c.ToArgb()); tries++)
+                    c = PlotControl.Palette[++k % PlotControl.Palette.Length];
+                h.Shown = c; used.Add(c.ToArgb()); k++;
+            }
+            var shownSet = new HashSet<HistoryItem>(shown);
+            foreach (ListViewItem it in _history.Items)
+            {
+                var h = (HistoryItem)it.Tag;
+                Color? c = shownSet.Contains(h) ? h.Shown : h.Custom;
+                it.ImageIndex = Swatch(c);
+            }
+        }
+
+        int Swatch(Color? c)
+        {
+            int key = c.HasValue ? c.Value.ToArgb() : 0;
+            int idx;
+            if (_swatchIndex.TryGetValue(key, out idx)) return idx;
+            var bmp = new Bitmap(14, 14);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                if (c.HasValue) using (var b = new SolidBrush(c.Value)) g.FillRectangle(b, 1, 1, 12, 12);
+                using (var pen = new Pen(c.HasValue ? Color.FromArgb(90, 90, 90) : Color.FromArgb(200, 200, 200))) g.DrawRectangle(pen, 1, 1, 11, 11);
+            }
+            _swatches.Images.Add(bmp);
+            idx = _swatches.Images.Count - 1;
+            _swatchIndex[key] = idx;
+            return idx;
+        }
+
+        List<HistoryItem> SelectedRuns()
+        {
+            var r = new List<HistoryItem>();
+            foreach (ListViewItem it in _history.SelectedItems) r.Add((HistoryItem)it.Tag);
+            return r;
+        }
+
+        void ChangeRunColour()
+        {
+            List<HistoryItem> sel = SelectedRuns();
+            if (sel.Count == 0) { MessageBox.Show(this, "Click a run first (Ctrl+click to pick several).", Text); return; }
+            using (var d = new ColorDialog { FullOpen = true, Color = sel[0].Custom ?? sel[0].Shown })
+                if (d.ShowDialog(this) == DialogResult.OK) SetRunColour(d.Color);
+        }
+
+        void SetRunColour(Color? c)
+        {
+            List<HistoryItem> sel = SelectedRuns();
+            if (sel.Count == 0) return;
+            foreach (HistoryItem h in sel) h.Custom = c;
+            SaveRunColours();
+            TickSelected(true);                            // a run you colour is one you want to see
+        }
+
+        void TickSelected(bool on)
+        {
+            _loadingHistory = true;
+            foreach (ListViewItem it in _history.SelectedItems) it.Checked = on;
+            _loadingHistory = false;
+            RefreshAnalysis();
+        }
+
+        Dictionary<string, Color> LoadRunColours()
+        {
+            var d = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string f = Path.Combine(_set.RunsFolder, RunColorsFile);
+                if (File.Exists(f))
+                    foreach (string line in File.ReadAllLines(f))
+                    {
+                        int eq = line.LastIndexOf('=');
+                        if (eq <= 0 || line.StartsWith("#")) continue;
+                        string hex = line.Substring(eq + 1).Trim().TrimStart('#');
+                        int rgb;
+                        if (int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out rgb))
+                            d[line.Substring(0, eq).Trim()] = Color.FromArgb(255, Color.FromArgb(rgb));
+                    }
+            }
+            catch (Exception ex) { Say("Could not read the run colours: " + ex.Message); }
+            return d;
+        }
+
+        void SaveRunColours()
+        {
+            try
+            {
+                var lines = new List<string> { "# DynamiX: colours chosen for runs in this folder (file name = #RRGGBB)" };
+                foreach (ListViewItem it in _history.Items)
+                {
+                    var h = (HistoryItem)it.Tag;
+                    if (h.Custom.HasValue) lines.Add(Path.GetFileName(h.Path) + "=#" + (h.Custom.Value.ToArgb() & 0xFFFFFF).ToString("X6"));
+                }
+                Directory.CreateDirectory(_set.RunsFolder);
+                File.WriteAllLines(Path.Combine(_set.RunsFolder, RunColorsFile), lines.ToArray());
+            }
+            catch (Exception ex) { Say("Could not save the run colours: " + ex.Message); }
+        }
+
+        // ------------------------------------------------------------------ project folder
+        class ProjectEntry
+        {
+            public string Path;
+            public override string ToString() { return System.IO.Path.GetFileName(Path.TrimEnd('\\', '/')) + "   (" + Path + ")"; }
+        }
+
+        void LoadProjects()
+        {
+            _loadingProjects = true;
+            _project.Items.Clear();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<string> { _set.RunsFolder };
+            list.AddRange((_set.RecentProjects ?? "").Split('|'));
+            foreach (string f in list)
+                if (!string.IsNullOrWhiteSpace(f) && seen.Add(f)) _project.Items.Add(new ProjectEntry { Path = f });
+            if (_project.Items.Count > 0) _project.SelectedIndex = 0;
+            _loadingProjects = false;
+        }
+
+        void RememberProject(string folder)
+        {
+            var list = new List<string> { folder };
+            foreach (string f in (_set.RecentProjects ?? "").Split('|'))
+                if (!string.IsNullOrWhiteSpace(f) && !string.Equals(f, folder, StringComparison.OrdinalIgnoreCase) && list.Count < 10) list.Add(f);
+            _set.RecentProjects = string.Join("|", list.ToArray());
+            LoadProjects();
+        }
+
+        void SetProject(string folder)
+        {
+            if (_runner != null && _runner.IsActive) { MessageBox.Show(this, "Stop the test before changing the project.", Text); LoadProjects(); return; }
+            _set.ProjectFolder = string.Equals(folder, _set.DataFolder, StringComparison.OrdinalIgnoreCase) ? "" : folder;
+            RememberProject(folder);
+            if (_selfTest == null) { try { _set.Save(Settings.DefaultPath); } catch (Exception) { } }
+            Say("Project: " + folder);
+            _loadingHistory = true; foreach (ListViewItem it in _history.Items) it.Checked = false; _loadingHistory = false;
+            RefreshHistory();
+        }
+
+        void BrowseProject()
+        {
+            using (var d = new FolderBrowserDialog { Description = "Project folder: test runs are saved here and the History list shows the runs in it.", SelectedPath = _set.RunsFolder, ShowNewFolderButton = true })
+                if (d.ShowDialog(this) == DialogResult.OK) SetProject(d.SelectedPath);
+        }
+
+        void NewProject()
+        {
+            string name = Prompt("New project", "Project name (a folder with this name is created in " + _set.DataFolder + "):", "");
+            if (string.IsNullOrWhiteSpace(name)) return;
+            foreach (char ch in Path.GetInvalidFileNameChars()) name = name.Replace(ch, '_');
+            string folder = Path.Combine(_set.DataFolder, name.Trim());
+            try { Directory.CreateDirectory(folder); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
+            SetProject(folder);
+        }
+
+        string Prompt(string title, string text, string value)
+        {
+            using (var f = new Form { Text = title, ClientSize = new Size(420, 110), FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false })
+            {
+                var l = new Label { Text = text, Location = new Point(10, 8), Size = new Size(400, 32) };
+                var t = new TextBox { Text = value, Location = new Point(10, 42), Width = 400 };
+                var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(250, 74), Width = 75 };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(335, 74), Width = 75 };
+                f.Controls.AddRange(new Control[] { l, t, ok, cancel });
+                f.AcceptButton = ok; f.CancelButton = cancel;
+                return f.ShowDialog(this) == DialogResult.OK ? t.Text : null;
+            }
+        }
+
         /// <summary>Speed over the whole test: position low-pass filtered (same cut-off as the analysis), then differentiated.</summary>
         double[] WholeTestSpeed(TestRecord rec)
         {
@@ -789,7 +1024,7 @@ namespace ShockDyno.App
 
         void ExportSummary()
         {
-            var tests = _history.CheckedItems.Cast<HistoryItem>().Where(h => h.Results != null && h.Results.Count > 0)
+            var tests = CheckedRuns().Where(h => h.Results != null && h.Results.Count > 0)
                 .Select(h => new KeyValuePair<string, List<StepResult>>(h.Display, h.Results)).ToList();
             if (tests.Count == 0) { MessageBox.Show(this, "Tick at least one test in the history list first.", Text); return; }
             using (var d = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = "summary.csv" })
@@ -818,6 +1053,7 @@ namespace ShockDyno.App
             }
             SendLimits();
             _absSpeed.Checked = _set.AbsoluteSpeed;
+            RememberProject(_set.RunsFolder);
             RefreshHistory();
         }
 

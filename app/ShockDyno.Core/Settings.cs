@@ -14,10 +14,18 @@ namespace ShockDyno.Core
     {
         [Category("1. General"), Description("SI: N, mm, mm/s.  Imperial: lbf, in, in/s.")]
         public UnitSystem Units { get; set; }
-        [Category("1. General"), Description("Folder where test CSV files are stored.")]
+        [Category("1. General"), Description("Base folder: sensor calibration file, sequences, and the default place for project folders and runs.")]
         public string DataFolder { get; set; }
+        [Category("1. General"), Description("Project folder: where test runs are saved, and which runs the History list shows. Empty = the data folder. Usually chosen with the Project box above the History list.")]
+        public string ProjectFolder { get; set; }
+        [Browsable(false)]
+        public string RecentProjects { get; set; }      // '|'-separated, most recent first
         [Browsable(false)]
         public string LastPort { get; set; }
+
+        /// <summary>Where runs are saved and listed: the project folder, or the data folder if none is chosen.</summary>
+        [Browsable(false)]
+        public string RunsFolder { get { return string.IsNullOrEmpty(ProjectFolder) ? DataFolder : ProjectFolder; } }
 
         [Category("2. Drive train"), Description("Belt reduction between motor and crank (motor turns per crank turn).")]
         public double BeltRatio { get; set; }

@@ -124,6 +124,16 @@ namespace ShockDyno.Core
             return results;
         }
 
+        /// <summary>True if the file starts like a saved test (so summaries and other CSV files are not listed).</summary>
+        public static bool IsTestFile(string path)
+        {
+            try
+            {
+                using (var r = new StreamReader(path)) { string l = r.ReadLine(); return l != null && l.StartsWith("# ShockDyno test"); }
+            }
+            catch (Exception) { return false; }
+        }
+
         public static string MakeFileName(string folder, string name, DateTime date)
         {
             var sb = new StringBuilder();
