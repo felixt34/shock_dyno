@@ -354,6 +354,7 @@ namespace ShockDyno.App
         string StepText()
         {
             if (_runner.Phase == RunPhase.Calibrating) return "Calibration cycle";
+            if (_runner.Phase == RunPhase.Parking) return "Returning to BDC";
             int i = _runner.CurrentStep;
             return i < 0 ? "Running" : string.Format("Step {0}/{1}", i + 1, _grid.Rows.Count - 1);
         }

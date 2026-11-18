@@ -133,6 +133,9 @@ static class Program
         rig.Runner.Start();
         rig.Run(900);
         Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        double parked = rig.Sim.CrankAboveBdcMm;
+        Check(parked < 0.02 * amplitude + 0.3, "crank parked at bottom dead centre: " + parked.ToString("0.00") + " mm above BDC"
+            + (parked < 0.02 * amplitude + 0.3 ? "" : "\n         " + string.Join("\n         ", rig.Log.GetRange(Math.Max(0, rig.Log.Count - 4), Math.Min(4, rig.Log.Count)))));
         CalibrationResult c = rig.Runner.Calibration;
         if (c == null) { Check(false, "calibration produced"); return; }
         Check(Near(c.AmplitudeMm, amplitude, 0.01), "amplitude measured: " + c.AmplitudeMm.ToString("0.00") + " mm");

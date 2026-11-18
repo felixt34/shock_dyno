@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace ShockDyno.Core
 {
-    public enum RunPhase { Idle, Calibrating, Running, Done, Aborted }
+    public enum RunPhase { Idle, Calibrating, Running, Parking, Done, Aborted }
 
     /// <summary>
     /// Runs a test: a slow calibration cycle (amplitude, preload, gas force), then every step of the sequence.
@@ -30,12 +30,18 @@ namespace ShockDyno.Core
         double _prevPeriod, _expectedPeriod, _commandTime, _lastProgressTime, _motorHz;
         double _speedFactor = 1;   // actual crank speed / nominal crank speed (motor slip, ratio error)
 
+        // Parking at bottom dead centre after the last step.
+        bool _parkStopSent, _parkApproaching, _parkAtSpeed;
+        double _parkStart, _parkStopTime, _parkMarginMm, _parkLastMove, _parkMaxMove;
+        readonly Queue<double> _parkRecent = new Queue<double>();   // last 50 ms of position above BDC
+        string _parkNote;
+
         public RunPhase Phase { get; private set; }
         public int CurrentStep { get; private set; }
         public CalibrationResult Calibration { get; private set; }
         public List<StepResult> Results { get; private set; }
         public DateTime Started { get; private set; }
-        public bool IsActive { get { return Phase == RunPhase.Calibrating || Phase == RunPhase.Running; } }
+        public bool IsActive { get { return Phase == RunPhase.Calibrating || Phase == RunPhase.Running || Phase == RunPhase.Parking; } }
 
         /// <summary>A cycle ended. The flag says whether it counts as a measured cycle.</summary>
         public event Action<ProcessedCycle, bool> CycleCompleted;
@@ -84,6 +90,7 @@ namespace ShockDyno.Core
                 if (_haveTime) _t += unchecked(raw[i].TimeUs - _lastUs) / 1e6;
                 _lastUs = raw[i].TimeUs; _haveTime = true;
                 var s = new Sample { T = _t, X = _set.PositionMm(raw[i].Position), F = _set.ForceN(raw[i].Force) };
+                if (Phase == RunPhase.Parking) { Park(s.X - Calibration.BdcMm); continue; }   // not part of the record
                 int index = _samples.Count;
                 _samples.Add(s); _stepOf.Add((short)CurrentStep); _cycleOf.Add(0);
 
@@ -101,13 +108,75 @@ namespace ShockDyno.Core
 
         public void OnStatus(DynoStatus st)
         {
-            if (IsActive && st.State == MachineState.Fault) Abort(DynoStatus.Describe(st.Fault));
+            if (IsActive && st.State == MachineState.Fault) { Abort(DynoStatus.Describe(st.Fault)); return; }
+            // While parking, wait until the drive has slowed down to the parking frequency.
+            if (Phase == RunPhase.Parking && st.VfdOk && st.VfdHz <= 1.25 * _set.CalibrationMotorHz + 0.2) _parkAtSpeed = true;
         }
 
         public void OnAck(EventId id, CommandResult result)
         {
             if (IsActive && result != CommandResult.Ok && (id == EventId.MotorRun || id == EventId.MotorSetFreq))
                 Abort("Motor command refused: " + DynoStatus.Describe(result));
+        }
+
+        // ------------------------------------------------------------------ return to bottom dead centre
+        void StartParking()
+        {
+            Phase = RunPhase.Parking;
+            CurrentStep = -1;
+            double crankHz = Kinematics.CrankHz(_set.CalibrationMotorHz, _set) * _speedFactor;
+            // Near BDC the position is A (1 - cos wt): stop this far above BDC so the crank coasts onto it.
+            double angle = 2 * Math.PI * crankHz * Math.Max(0, _set.StopLagMs) / 1000.0;
+            _parkMarginMm = Calibration.AmplitudeMm * (1 - Math.Cos(Math.Min(angle, Math.PI / 2)));
+            _parkStopSent = false; _parkApproaching = false; _parkAtSpeed = false; _parkStart = _t; _parkLastMove = _t; _parkNote = null;
+            _parkRecent.Clear();
+            _expectedPeriod = 1 / crankHz;
+            // Largest position change in 50 ms at the parking speed: anything faster means the drive is still slowing down.
+            _parkMaxMove = 2 * Calibration.AmplitudeMm * 2 * Math.PI * crankHz * 0.05 + 0.05;
+            Say("Returning to bottom dead centre");
+            _link.MotorSetFreq(_set.CalibrationMotorHz);
+            Raise(Progress);
+        }
+
+        void Park(double xr)
+        {
+            _parkRecent.Enqueue(xr);
+            if (_parkRecent.Count > 25) _parkRecent.Dequeue();
+            double moved = xr - _parkRecent.Peek();                // over the last 50 ms
+            if (!_parkStopSent)
+            {
+                if (!_parkAtSpeed && _t - _parkStart > 10) _parkAtSpeed = true;   // no drive frequency reported: assume slowed down
+                if (!_parkAtSpeed) return;
+                bool slow = Math.Abs(moved) < _parkMaxMove;
+                bool falling = _parkRecent.Count == 25 && slow && moved < -0.01;
+                if (falling && xr < 0.25 * Calibration.AmplitudeMm) _parkApproaching = true;
+                bool risingAgain = _parkApproaching && _parkRecent.Count == 25 && moved > 0.01;
+                if (falling && xr <= _parkMarginMm) SendParkStop(null);
+                else if (risingAgain) SendParkStop("passed bottom dead centre before the stop");
+                else if (_t - _parkStart > 1.5 * _expectedPeriod + 15) SendParkStop("bottom dead centre not reached in time");
+                return;
+            }
+            if (Math.Abs(moved) > 0.02) _parkLastMove = _t;
+            if (_t - _parkLastMove > 0.5 || _t - _parkStopTime > 5)    // crank at rest (or gave up waiting)
+            {
+                string where = string.Format("Crank stopped {0:0.0} mm from bottom dead centre", Math.Abs(xr));
+                Say(_parkNote == null ? where : where + " (" + _parkNote + ")");
+                Finish();
+            }
+        }
+
+        void SendParkStop(string note)
+        {
+            _link.MotorStop();
+            _parkStopSent = true; _parkStopTime = _t; _parkLastMove = _t; _parkNote = note;
+        }
+
+        void Finish()
+        {
+            Phase = RunPhase.Done;
+            CurrentStep = -1;
+            Raise(Progress);
+            var h = Finished; if (h != null) h(true, "Test complete");
         }
 
         void OnBdc(int j)
@@ -176,11 +245,9 @@ namespace ShockDyno.Core
                 CurrentStep++;
                 if (CurrentStep >= _seq.Steps.Count)
                 {
+                    if (_set.ReturnToBdc && Calibration != null) { StartParking(); return; }
                     _link.MotorStop();
-                    Phase = RunPhase.Done;
-                    CurrentStep = -1;
-                    Raise(Progress);
-                    var h = Finished; if (h != null) h(true, "Test complete");
+                    Finish();
                     return;
                 }
                 SequenceStep step = _seq.Steps[CurrentStep];
@@ -216,6 +283,12 @@ namespace ShockDyno.Core
         void Abort(string reason)
         {
             _link.MotorStop();
+            if (Phase == RunPhase.Parking)              // all steps were measured: the test itself is complete
+            {
+                Say("Return to bottom dead centre stopped: " + reason);
+                Finish();
+                return;
+            }
             Phase = RunPhase.Aborted;
             CurrentStep = -1;
             Say("Test stopped: " + reason);

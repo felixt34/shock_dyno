@@ -25,6 +25,9 @@ namespace ShockDyno.Core
         public double RebC1 = 8, RebKnee = 40, RebC2 = 2.5;
         public double ForceNoiseN = 1.5, PosNoiseMm = 0.003;
         public double Slip = 0.025, RampHzPerS = 10;
+        public double StopLagS = 0.25;                           // stop command -> drive starts to brake (USB, Modbus, drive)
+        /// <summary>Crank position above bottom dead centre (mm), without noise.</summary>
+        public double CrankAboveBdcMm { get { lock (_lock) return AmplitudeMm * (1 - Math.Cos(_theta)); } }
         public bool SafetyOk = true;
         /// <summary>Virtual seconds per real second when the internal timer runs.</summary>
         public double TimeScale = 1;
@@ -37,6 +40,7 @@ namespace ShockDyno.Core
         bool _acqOn, _limitsSet;
         int _limLo, _limHi, _overLimit;
         double _cmdHz, _hz, _theta, _frac;
+        long _stopAtUs = -1;
         uint _us;
 
         public SimulatedDynoLink(Settings set)
@@ -104,7 +108,7 @@ namespace ShockDyno.Core
                         : !SafetyOk ? CommandResult.SafetyOpen
                         : !_limitsSet ? CommandResult.NoLimits
                         : !_acqOn ? CommandResult.AcqOff : CommandResult.Ok;
-                    if (r == CommandResult.Ok) { _cmdHz = BitConverter.ToUInt16(p, 1) / 100.0; _state = MachineState.Running; }
+                    if (r == CommandResult.Ok) { _cmdHz = BitConverter.ToUInt16(p, 1) / 100.0; _state = MachineState.Running; _stopAtUs = -1; }
                     Ack(id, r); break;
                 case EventId.MotorSetFreq:
                     if (_state == MachineState.Running) { _cmdHz = BitConverter.ToUInt16(p, 1) / 100.0; Ack(id, CommandResult.Ok); }
@@ -119,14 +123,15 @@ namespace ShockDyno.Core
 
         void StopMotor()
         {
-            _cmdHz = 0;
+            if (_cmdHz > 0 && StopLagS > 0) _stopAtUs = _us + (long)(StopLagS * 1e6);   // the drive brakes a little later
+            else _cmdHz = 0;
             if (_state == MachineState.Running) _state = MachineState.Idle;
         }
 
         void Trip(FaultCode f)
         {
             if (_state != MachineState.Fault) { _state = MachineState.Fault; _fault = f; }
-            _cmdHz = 0;
+            _cmdHz = 0; _stopAtUs = -1;
         }
 
         double Gauss()
@@ -156,6 +161,7 @@ namespace ShockDyno.Core
                     _frac -= 1;
                     double h = 1 / SampleHz;
                     if (_state == MachineState.Running && !SafetyOk) Trip(FaultCode.SafetyOpen);
+                    if (_stopAtUs >= 0 && _us >= _stopAtUs) { _cmdHz = 0; _stopAtUs = -1; }
                     double step = RampHzPerS * h;
                     _hz += Math.Max(-step, Math.Min(step, _cmdHz - _hz));
                     double w = 2 * Math.PI * Kinematics.CrankHz(_hz, _set) * (1 - Slip);
