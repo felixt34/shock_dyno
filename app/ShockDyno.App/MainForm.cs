@@ -88,7 +88,7 @@ namespace ShockDyno.App
             LoadProjects();
             RefreshHistory();
             UpdateUi();
-            _uiTimer.Tick += (s, e) => UpdateUi();
+            _uiTimer.Tick += (s, e) => { if (_link != null) _link.KeepAlive(); UpdateUi(); };   // no KeepAlive = no heartbeat = motor stops
             _uiTimer.Start();
             if (selfTest != null) Shown += (s, e) => { _ports.SelectedItem = SimulatorPort; ToggleConnection(); StartTest(); };
         }

@@ -21,6 +21,11 @@ namespace ShockDyno.Core
         void MotorSetFreq(double hz);
         void MotorStop();
         void ClearFault();
+        /// <summary>
+        /// Call regularly from the user-interface thread. Heartbeats are only sent while this keeps being
+        /// called, so a frozen application stops the motor just like a pulled cable.
+        /// </summary>
+        void KeepAlive();
     }
 
     /// <summary>Packet handling common to the serial link and the simulator.</summary>
@@ -28,6 +33,9 @@ namespace ShockDyno.Core
     {
         readonly PacketDecoder _decoder = new PacketDecoder();
         Timer _heartbeat;
+        int _aliveTick;                           // Environment.TickCount of the last KeepAlive()
+        /// <summary>Heartbeats stop when the application has not called KeepAlive for this long.</summary>
+        public const int AppFrozenMs = 1500;
 
         public event Action<RawSample[]> SamplesReceived;
         public event Action<DynoStatus> StatusReceived;
@@ -49,8 +57,12 @@ namespace ShockDyno.Core
         public void Open()
         {
             OpenTransport();
+            _aliveTick = Environment.TickCount;
             if (UseHeartbeat)
-                _heartbeat = new Timer(_ => Send(Packet.EncodeEvent(EventId.Heartbeat)), null, 0, 100);
+                _heartbeat = new Timer(_ =>
+                {
+                    if (unchecked(Environment.TickCount - _aliveTick) < AppFrozenMs) Send(Packet.EncodeEvent(EventId.Heartbeat));
+                }, null, 0, 100);
         }
 
         public void Close()
@@ -60,6 +72,8 @@ namespace ShockDyno.Core
         }
 
         public void Dispose() { Close(); }
+
+        public void KeepAlive() { _aliveTick = Environment.TickCount; }
 
         protected void OnBytes(byte[] data, int count)
         {
