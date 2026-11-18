@@ -26,6 +26,7 @@ static class Program
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
         TestFullRun(25, 6, 0.5);  // slow drive ramp: cycles during the ramp must not count
+        TestUnplug();
         TestCalibrationFile();
         TestFindBdc();
         TestSafetyTrip();
@@ -175,6 +176,36 @@ static class Program
     static double Model(double v, double c1, double knee, double c2)
     {
         return (v <= knee ? c1 * v : c1 * knee + c2 * (v - knee)) + 15 * Math.Tanh(v / 2);
+    }
+
+    /// <summary>A port whose writes and close hang forever, like a USB serial port whose cable was pulled.</summary>
+    class HungLink : DynoLinkBase
+    {
+        public bool Hang;
+        public override bool IsOpen { get { return true; } }
+        protected override bool UseHeartbeat { get { return false; } }
+        protected override void OpenTransport() { }
+        protected override void CloseTransport() { System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
+        protected override void Write(byte[] packet) { if (Hang) System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
+    }
+
+    static void TestUnplug()
+    {
+        Console.WriteLine("Serial link: cable pulled");
+        var l = new HungLink();
+        int raised = 0;
+        l.Disconnected += r => System.Threading.Interlocked.Increment(ref raised);
+        l.Open();
+        l.Hang = true;
+        new System.Threading.Thread(() => l.MotorStop()) { IsBackground = true }.Start();   // this write never returns
+        System.Threading.Thread.Sleep(50);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int k = 0; k < 5; k++) l.MotorRun(10);                    // must not pile up behind the stuck write
+        long sendMs = sw.ElapsedMilliseconds;
+        Check(sendMs < 1000 && raised == 1, "calls after a stuck write return quickly (" + sendMs + " ms) and Disconnected is raised once");
+        sw.Restart();
+        l.Close();                                                      // CloseTransport hangs: Close must not
+        Check(sw.ElapsedMilliseconds < 100, "Close returns at once even when closing the port hangs (" + sw.ElapsedMilliseconds + " ms)");
     }
 
     static void TestCalibrationFile()

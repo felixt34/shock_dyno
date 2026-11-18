@@ -33,6 +33,9 @@ namespace ShockDyno.Core
     {
         readonly PacketDecoder _decoder = new PacketDecoder();
         Timer _heartbeat;
+        readonly object _writeLock = new object();
+        volatile bool _dead;                      // the transport failed: every call returns at once
+        int _disconnectRaised;
         int _aliveTick;                           // Environment.TickCount of the last KeepAlive()
         /// <summary>Heartbeats stop when the application has not called KeepAlive for this long.</summary>
         public const int AppFrozenMs = 1500;
@@ -56,6 +59,7 @@ namespace ShockDyno.Core
 
         public void Open()
         {
+            _dead = false; _disconnectRaised = 0;
             OpenTransport();
             _aliveTick = Environment.TickCount;
             if (UseHeartbeat)
@@ -65,10 +69,15 @@ namespace ShockDyno.Core
                 }, null, 0, 100);
         }
 
+        /// <summary>
+        /// Never blocks: closing a USB serial port whose device was unplugged can hang, so the
+        /// transport is closed on a background thread.
+        /// </summary>
         public void Close()
         {
+            _dead = true;
             if (_heartbeat != null) { _heartbeat.Dispose(); _heartbeat = null; }
-            CloseTransport();
+            ThreadPool.QueueUserWorkItem(_ => { try { CloseTransport(); } catch (Exception) { } });
         }
 
         public void Dispose() { Close(); }
@@ -80,8 +89,13 @@ namespace ShockDyno.Core
             lock (_decoder) _decoder.Feed(data, 0, count);
         }
 
+        /// <summary>Marks the link dead (no more writes) and raises Disconnected once.</summary>
         protected void RaiseDisconnected(string reason)
         {
+            _dead = true;
+            var hb = _heartbeat;
+            if (hb != null) hb.Change(Timeout.Infinite, Timeout.Infinite);
+            if (Interlocked.Exchange(ref _disconnectRaised, 1) != 0) return;
             var h = Disconnected;
             if (h != null) h(reason);
         }
@@ -111,8 +125,12 @@ namespace ShockDyno.Core
 
         void Send(byte[] packet)
         {
-            try { if (IsOpen) lock (this) Write(packet); }
+            if (_dead) return;
+            // A write stuck on a vanished port must not pile up callers (or freeze the window).
+            if (!Monitor.TryEnter(_writeLock, 300)) { RaiseDisconnected("the serial port stopped accepting data"); return; }
+            try { if (!_dead && IsOpen) Write(packet); }
             catch (Exception ex) { RaiseDisconnected(ex.Message); }
+            finally { Monitor.Exit(_writeLock); }
         }
 
         static byte[] Hz(double hz)
@@ -140,13 +158,19 @@ namespace ShockDyno.Core
     {
         public const int Baud = 460800;
         readonly SerialPort _port;
+        readonly string _name;
         readonly byte[] _rx = new byte[4096];
+        Timer _watch;
+        int _lastRxTick;
+        /// <summary>The ESP32 sends a status every 100 ms: this much silence means the link is gone.</summary>
+        public const int SilenceMs = 3000;
 
         public SerialDynoLink(string portName)
         {
+            _name = portName;
             _port = new SerialPort(portName, Baud, Parity.None, 8, StopBits.One);
             _port.ReadBufferSize = 1 << 16;
-            _port.WriteTimeout = 500;
+            _port.WriteTimeout = 200;
             // Do not toggle DTR/RTS: on ESP32 dev boards they reset the chip.
             _port.DtrEnable = false;
             _port.RtsEnable = false;
@@ -157,7 +181,7 @@ namespace ShockDyno.Core
                     while (_port.IsOpen && _port.BytesToRead > 0)
                     {
                         int n = _port.Read(_rx, 0, _rx.Length);
-                        if (n > 0) OnBytes(_rx, n);
+                        if (n > 0) { _lastRxTick = Environment.TickCount; OnBytes(_rx, n); }
                     }
                 }
                 catch (Exception ex) { RaiseDisconnected(ex.Message); }
@@ -165,8 +189,32 @@ namespace ShockDyno.Core
         }
 
         public override bool IsOpen { get { return _port.IsOpen; } }
-        protected override void OpenTransport() { _port.Open(); }
-        protected override void CloseTransport() { try { if (_port.IsOpen) _port.Close(); } catch { } }
+        protected override void OpenTransport()
+        {
+            _port.Open();
+            // Known .NET issue: when the USB device disappears, the port's stream can throw from its
+            // finalizer and crash the application. Keep the finalizer off while the port is in use.
+            try { GC.SuppressFinalize(_port.BaseStream); } catch (Exception) { }
+            _lastRxTick = Environment.TickCount;
+            _watch = new Timer(_ => Watch(), null, 500, 500);
+        }
+
+        void Watch()
+        {
+            if (unchecked(Environment.TickCount - _lastRxTick) < 1000) return;
+            bool present = true;
+            try { present = Array.IndexOf(SerialPort.GetPortNames(), _name) >= 0; } catch (Exception) { }
+            if (!present) RaiseDisconnected("USB cable unplugged (" + _name + " disappeared)");
+            else if (unchecked(Environment.TickCount - _lastRxTick) > SilenceMs) RaiseDisconnected("no data from the ESP32 for " + SilenceMs / 1000 + " s");
+        }
+
+        protected override void CloseTransport()
+        {
+            var w = _watch; _watch = null;
+            if (w != null) w.Dispose();
+            try { GC.ReRegisterForFinalize(_port.BaseStream); } catch (Exception) { }
+            try { if (_port.IsOpen) _port.Close(); } catch (Exception) { }
+        }
         protected override void Write(byte[] packet) { _port.Write(packet, 0, packet.Length); }
     }
 }

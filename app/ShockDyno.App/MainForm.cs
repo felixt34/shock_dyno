@@ -314,7 +314,9 @@ namespace ShockDyno.App
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Could not open " + port + ":\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, "Could not open " + port + ":\n" + ex.Message +
+                    "\n\nIf the cable was just plugged back in, wait a few seconds and press Connect again." +
+                    "\nCheck that no other program (Arduino serial monitor) has the port open.", Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             UpdateUi();
         }
