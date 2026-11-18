@@ -162,7 +162,7 @@ namespace ShockDyno.App
             _project.Location = new Point(0, 22);
             browse.Location = new Point(0, 50); newProject.Location = new Point(145, 50);
             head.Controls.Add(_project); head.Controls.Add(browse); head.Controls.Add(newProject);
-            head.Controls.Add(new Label { Text = "Runs - tick to show in the graphs,\nright-click to change colours", Location = new Point(0, 86), Size = new Size(290, 36), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
+            head.Controls.Add(new Label { Text = "Runs - tick to show in the graphs,\nclick the colour square to change it", Location = new Point(0, 86), Size = new Size(290, 36), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
             right.Controls.Add(head, 0, 0);
             right.Controls.Add(_history, 0, 1);
             _history.SmallImageList = _swatches;
@@ -178,6 +178,13 @@ namespace ShockDyno.App
             menu2.Items.Add(new ToolStripSeparator());
             menu2.Items.Add("Open project folder", null, (s, e) => { Directory.CreateDirectory(_set.RunsFolder); System.Diagnostics.Process.Start(_set.RunsFolder); });
             _history.ContextMenuStrip = menu2;
+            _history.MouseClick += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Left) return;
+                ListViewItem it = _history.GetItemAt(e.X, e.Y);
+                if (it == null || !it.GetBounds(ItemBoundsPortion.Icon).Contains(e.Location)) return;
+                PickRunColour(new List<HistoryItem> { (HistoryItem)it.Tag });   // click on the colour square
+            };
             var export = new Button { Text = "Export summary CSV...", Dock = DockStyle.Fill };
             export.Click += (s, e) => ExportSummary();
             right.Controls.Add(export, 0, 2);
@@ -882,17 +889,27 @@ namespace ShockDyno.App
         {
             List<HistoryItem> sel = SelectedRuns();
             if (sel.Count == 0) { MessageBox.Show(this, "Click a run first (Ctrl+click to pick several).", Text); return; }
-            using (var d = new ColorDialog { FullOpen = true, Color = sel[0].Custom ?? sel[0].Shown })
-                if (d.ShowDialog(this) == DialogResult.OK) SetRunColour(d.Color);
+            PickRunColour(sel);
         }
 
-        void SetRunColour(Color? c)
+        void PickRunColour(List<HistoryItem> runs)
         {
-            List<HistoryItem> sel = SelectedRuns();
-            if (sel.Count == 0) return;
-            foreach (HistoryItem h in sel) h.Custom = c;
+            Color start = runs[0].Custom ?? (runs[0].Shown.IsEmpty ? PlotControl.Palette[0] : runs[0].Shown);
+            using (var d = new ColorDialog { FullOpen = true, Color = start })
+                if (d.ShowDialog(this) == DialogResult.OK) SetRunColour(runs, d.Color);
+        }
+
+        void SetRunColour(Color? c) { SetRunColour(SelectedRuns(), c); }
+
+        void SetRunColour(List<HistoryItem> runs, Color? c)
+        {
+            if (runs.Count == 0) return;
+            foreach (HistoryItem h in runs) h.Custom = c;
             SaveRunColours();
-            TickSelected(true);                            // a run you colour is one you want to see
+            _loadingHistory = true;                         // a run you colour is one you want to see
+            foreach (ListViewItem it in _history.Items) if (runs.Contains((HistoryItem)it.Tag)) it.Checked = true;
+            _loadingHistory = false;
+            RefreshAnalysis();
         }
 
         void TickSelected(bool on)
