@@ -26,6 +26,7 @@ static class Program
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
         TestFullRun(25, 6, 0.5);  // slow drive ramp: cycles during the ramp must not count
+        TestSampleClock();
         TestUnplug();
         TestCalibrationFile();
         TestFindBdc();
@@ -187,6 +188,20 @@ static class Program
         protected override void OpenTransport() { }
         protected override void CloseTransport() { System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
         protected override void Write(byte[] packet) { if (Hang) System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
+    }
+
+    static void TestSampleClock()
+    {
+        Console.WriteLine("Sample clock");
+        var c = new SampleClock();
+        c.Advance(1000000); c.Advance(1002000);
+        bool older = c.Advance(2000);                                   // a late packet from earlier
+        c.Advance(1004000);
+        Check(!older && Near(c.T, 0.004, 1e-9), "an older sample is skipped instead of jumping 4295 s ahead (t = " + c.T + " s)");
+        for (uint k = 0; k < 100; k++) c.Advance(5 + 2000 * k);          // ESP32 restarted: its clock went back to 0
+        Check(c.T > 0.004 + 0.09 && c.T < 0.004 + 0.21, "after an ESP32 restart, time carries on without a jump (t = " + c.T.ToString("0.000") + " s)");
+        var w = new SampleClock(); w.Advance(4294966000u); w.Advance(704u);   // 32-bit microsecond counter wraps after 71 min
+        Check(Near(w.T, 0.002, 1e-9), "the 32-bit microsecond wrap is handled");
     }
 
     static void TestUnplug()

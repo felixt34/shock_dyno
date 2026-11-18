@@ -30,6 +30,8 @@ namespace ShockDyno.App
         TestRunner _runner;
         DynoStatus _status;
         DateTime _lastStatus = DateTime.MinValue;
+        DateTime _lastResend = DateTime.MinValue;
+        bool _acqSeenOn;                  // acquisition was on at least once on this connection
 
         // rolling average of the raw readings (last 0.5 s) for the live display, tare and sensor calibration
         readonly Queue<RawSample> _recent = new Queue<RawSample>();
@@ -45,11 +47,12 @@ namespace ShockDyno.App
         readonly Button _clear = new Button { Text = "Clear fault", Width = 144, Height = 28 };
         readonly Button _findBdc = new Button { Text = "Find bottom dead centre", Width = 294, Height = 28 };
         BdcParker _parker;                           // "Find bottom dead centre" outside a test
-        double _parkT; uint _parkLastUs; bool _parkHaveT;
+        readonly SampleClock _parkClock = new SampleClock();
 
         // live signals (last 10 s) for the Live tab
         readonly Queue<double[]> _liveBuf = new Queue<double[]>();   // { t, force N, position mm }
-        double _liveT; uint _liveLastUs; bool _liveHaveT;
+        readonly SampleClock _liveClock = new SampleClock();
+        double _liveT;
         readonly PlotControl _plotLiveF = new PlotControl { Dock = DockStyle.Fill }, _plotLiveX = new PlotControl { Dock = DockStyle.Fill };
         TabPage _liveTab;
         readonly TextBox _name = new TextBox { Width = 294 };
@@ -306,7 +309,7 @@ namespace ShockDyno.App
                 link.Disconnected += reason => Ui(() => { if (link == _link) Disconnect("Connection lost: " + reason); });
                 link.Open();
                 _link = link;
-                _status = null;
+                _status = null; _acqSeenOn = false;
                 _link.StartAcquisition();
                 SendLimits();
                 _set.LastPort = port;
@@ -359,15 +362,14 @@ namespace ShockDyno.App
             {
                 _recent.Enqueue(s); _sumF += s.Force; _sumP += s.Position;
                 if (_recent.Count > 250) { RawSample old = _recent.Dequeue(); _sumF -= old.Force; _sumP -= old.Position; }
-                if (_liveHaveT) _liveT += unchecked(s.TimeUs - _liveLastUs) / 1e6;
-                _liveLastUs = s.TimeUs; _liveHaveT = true;
+                if (!_liveClock.Advance(s.TimeUs)) continue;    // out of order: skip
+                _liveT = _liveClock.T;
                 _liveBuf.Enqueue(new[] { _liveT, _set.ForceN(s.Force), _set.PositionMm(s.Position) });
                 while (_liveBuf.Count > 0 && _liveBuf.Peek()[0] < _liveT - 10) _liveBuf.Dequeue();
                 if (_parker != null && !_parker.Done)
                 {
-                    if (_parkHaveT) _parkT += unchecked(s.TimeUs - _parkLastUs) / 1e6;
-                    _parkLastUs = s.TimeUs; _parkHaveT = true;
-                    _parker.Feed(_parkT, _set.PositionMm(s.Position));
+                    _parkClock.Advance(s.TimeUs);
+                    _parker.Feed(_parkClock.T, _set.PositionMm(s.Position));
                 }
             }
             if (_runner != null) _runner.OnSamples(samples);
@@ -380,6 +382,19 @@ namespace ShockDyno.App
             _status = st; _lastStatus = DateTime.Now;
             if (newFault) Say("FAULT: " + DynoStatus.Describe(st.Fault));
             if (_runner != null) _runner.OnStatus(st);
+            // The ESP32 starts with acquisition off and no force limits (power-up, reset when the port
+            // opens, cable plugged back in). Send them again whenever it reports them missing.
+            if (!st.AcqOn || !st.LimitsSet)
+            {
+                if (_acqSeenOn) { Say("The ESP32 restarted: acquisition and force limits sent again"); _acqSeenOn = false; }
+                if ((DateTime.Now - _lastResend).TotalMilliseconds > 500 && _link != null)
+                {
+                    _lastResend = DateTime.Now;
+                    if (!st.AcqOn) _link.StartAcquisition();
+                    if (!st.LimitsSet) SendLimits();
+                }
+            }
+            else _acqSeenOn = true;
             if (_parker != null && !_parker.Done)
             {
                 if (st.State == MachineState.Fault) _parker.Cancel(DynoStatus.Describe(st.Fault));
@@ -542,7 +557,7 @@ namespace ShockDyno.App
             SendLimits();
             _parker = new BdcParker(_link, _set);
             _parker.Log += Say;
-            _parkT = 0; _parkHaveT = false;
+            _parkClock.Reset();
             _parker.Start(0, false, double.NaN, double.NaN, 1);
             UpdateUi();
         }

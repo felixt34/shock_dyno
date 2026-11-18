@@ -72,6 +72,35 @@ namespace ShockDyno.Core
         }
     }
 
+    /// <summary>
+    /// Turns the ESP32's 32-bit microsecond timestamps into seconds. A sample older than the previous one
+    /// is rejected (it would otherwise wrap to a huge forward jump), and a gap over 1 s (ESP32 restarted,
+    /// link paused) counts as one sample period instead of a jump.
+    /// </summary>
+    public class SampleClock
+    {
+        uint _last; bool _have; int _older;
+        public double T { get; private set; }
+
+        /// <summary>Advances to this sample. False if the sample is older than the previous one: skip it.</summary>
+        public bool Advance(uint timeUs)
+        {
+            if (!_have) { _have = true; _last = timeUs; return true; }
+            uint d = unchecked(timeUs - _last);
+            if (d > 0x80000000u)                                 // older than the previous sample
+            {
+                if (++_older < 50) return false;                 // a late packet: skip it
+                d = 2000;                                        // 0.1 s of "older" samples: the ESP32 clock restarted
+            }
+            _older = 0;
+            _last = timeUs;
+            T += d > 1000000u ? 0.002 : d / 1e6;
+            return true;
+        }
+
+        public void Reset() { _have = false; T = 0; }
+    }
+
     public static class Packet
     {
         public const byte Hdr0 = 0xFF, Hdr1 = 0x00, TypeEvent = 0x55, TypeData = 0xAA;

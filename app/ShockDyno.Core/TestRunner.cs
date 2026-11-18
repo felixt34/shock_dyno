@@ -23,8 +23,7 @@ namespace ShockDyno.Core
         readonly List<ProcessedCycle> _stepCycles = new List<ProcessedCycle>();
         readonly List<double> _stepPeriods = new List<double>();
 
-        bool _haveTime;
-        uint _lastUs;
+        readonly SampleClock _clock = new SampleClock();
         double _t;
         int _lastBdc = -1, _commandIndex, _fullCyclesSinceCommand, _consistentOffTarget;
         double _prevPeriod, _prevPeriod2, _prevPeriod3, _expectedPeriod, _commandTime, _lastProgressTime, _motorHz;
@@ -70,7 +69,7 @@ namespace ShockDyno.Core
             _samples.Clear(); _stepOf.Clear(); _cycleOf.Clear(); _stepHz.Clear(); Results.Clear();
             for (int i = 0; i < _seq.Steps.Count; i++) _stepHz.Add(0);
             _detector = new CycleDetector(_set.CycleHysteresisMm);
-            _haveTime = false; _t = 0; _lastBdc = -1; _speedFactor = 1;
+            _clock.Reset(); _t = 0; _lastBdc = -1; _speedFactor = 1;
             Calibration = null;
             CurrentStep = -1;
             Started = DateTime.Now;
@@ -92,8 +91,8 @@ namespace ShockDyno.Core
             if (!IsActive) return;
             for (int i = 0; i < raw.Length && IsActive; i++)
             {
-                if (_haveTime) _t += unchecked(raw[i].TimeUs - _lastUs) / 1e6;
-                _lastUs = raw[i].TimeUs; _haveTime = true;
+                if (!_clock.Advance(raw[i].TimeUs)) continue;   // out of order: skip
+                _t = _clock.T;
                 var s = new Sample { T = _t, X = _set.PositionMm(raw[i].Position), F = _set.ForceN(raw[i].Force) };
                 if (Phase == RunPhase.Parking) { _parker.Feed(_t, s.X); if (_parker.Done) Finish(); continue; }   // not part of the record
                 int index = _samples.Count;
@@ -114,6 +113,7 @@ namespace ShockDyno.Core
         public void OnStatus(DynoStatus st)
         {
             if (IsActive && st.State == MachineState.Fault) { Abort(DynoStatus.Describe(st.Fault)); return; }
+            if (IsActive && !st.AcqOn) { Abort("The ESP32 restarted during the test (acquisition off)"); return; }
             if (st.VfdOk)
             {
                 _driveHz = st.VfdHz;
