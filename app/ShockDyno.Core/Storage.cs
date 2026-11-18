@@ -139,7 +139,7 @@ namespace ShockDyno.Core
             using (var w = new StreamWriter(path, false, new UTF8Encoding(false)))
             {
                 w.WriteLine(string.Join(",", new[] {
-                    "test", "target_speed_" + su,
+                    "test", "target_speed_" + su, "motor_frequency_Hz",
                     "compression_peak_velocity_" + su, "compression_force_at_peak_velocity_" + fu, "compression_max_force_" + fu,
                     "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles" }));
                 foreach (var t in tests)
@@ -147,6 +147,7 @@ namespace ShockDyno.Core
                         w.WriteLine(string.Join(",", new[] {
                             "\"" + t.Key.Replace("\"", "'") + "\"",
                             Units.Length(r.TargetSpeed, u).ToString("0.###", Inv),
+                            r.MotorHz.ToString("0.00", Inv),
                             Units.Length(r.CompPeakVel, u).ToString("0.###", Inv),
                             Units.Force(r.CompForceAtPeakVel, u).ToString("0.##", Inv),
                             Units.Force(r.CompMaxForce, u).ToString("0.##", Inv),

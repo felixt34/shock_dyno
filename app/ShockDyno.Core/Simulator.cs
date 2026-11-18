@@ -27,6 +27,7 @@ namespace ShockDyno.Core
         public double Slip = 0.025, RampHzPerS = 10;
         public double StopLagS = 0.25;                           // stop command -> drive starts to brake (USB, Modbus, drive)
         /// <summary>Crank position above bottom dead centre (mm), without noise.</summary>
+        public void SetCrankAngle(double rad) { lock (_lock) _theta = rad; }
         public double CrankAboveBdcMm { get { lock (_lock) return AmplitudeMm * (1 - Math.Cos(_theta)); } }
         public bool SafetyOk = true;
         /// <summary>Virtual seconds per real second when the internal timer runs.</summary>

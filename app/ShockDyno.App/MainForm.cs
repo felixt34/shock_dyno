@@ -41,6 +41,15 @@ namespace ShockDyno.App
         readonly Button _stop = new Button { Text = "STOP", Width = 144, Height = 46, BackColor = Color.FromArgb(207, 34, 46), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         readonly Button _tare = new Button { Text = "Tare force", Width = 144, Height = 28 };
         readonly Button _clear = new Button { Text = "Clear fault", Width = 144, Height = 28 };
+        readonly Button _findBdc = new Button { Text = "Find bottom dead centre", Width = 294, Height = 28 };
+        BdcParker _parker;                           // "Find bottom dead centre" outside a test
+        double _parkT; uint _parkLastUs; bool _parkHaveT;
+
+        // live signals (last 10 s) for the Live tab
+        readonly Queue<double[]> _liveBuf = new Queue<double[]>();   // { t, force N, position mm }
+        double _liveT; uint _liveLastUs; bool _liveHaveT;
+        readonly PlotControl _plotLiveF = new PlotControl { Dock = DockStyle.Fill }, _plotLiveX = new PlotControl { Dock = DockStyle.Fill };
+        TabPage _liveTab;
         readonly TextBox _name = new TextBox { Width = 294 };
         readonly TextBox _notes = new TextBox { Width = 294, Height = 40, Multiline = true };
         readonly DataGridView _grid = new DataGridView { Width = 294, Height = 178 };
@@ -100,7 +109,7 @@ namespace ShockDyno.App
             foreach (GroupBox g in new[] {
                 Group("Connection", Row(_ports, _connect)),
                 Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position),
-                      Row(_start, _stop), Row(_tare, _clear)),
+                      Row(_start, _stop), Row(_tare, _clear), Row(_findBdc)),
                 Group("Test", Caption("Name (damper, settings)"), _name, Caption("Notes"), _notes),
                 Group("Sequence", _grid, Row(load, save, def)),
                 Group("Calibration cycle (removed from the graphs)", Pair("Amplitude", _amp), Pair("Preload (at BDC)", _preload), Pair("Gas force (mid-stroke)", _gas)) })
@@ -125,6 +134,11 @@ namespace ShockDyno.App
             split.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); split.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             split.Controls.Add(_plotTimeF, 0, 0); split.Controls.Add(_plotTimeX, 0, 1);
             _tabs.TabPages.Add(Page("Time", split));
+            var liveSplit = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            liveSplit.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); liveSplit.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            liveSplit.Controls.Add(_plotLiveF, 0, 0); liveSplit.Controls.Add(_plotLiveX, 0, 1);
+            _liveTab = Page("Live signals", liveSplit);
+            _tabs.TabPages.Add(_liveTab);
 
             var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Padding = new Padding(4) };
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
@@ -161,6 +175,7 @@ namespace ShockDyno.App
             _stop.Click += (s, e) => StopTest();
             _tare.Click += (s, e) => Tare();
             _clear.Click += (s, e) => { if (_link != null) _link.ClearFault(); };
+            _findBdc.Click += (s, e) => FindBdc();
             _history.ItemCheck += (s, e) => { if (!_loadingHistory) BeginInvoke((Action)RefreshAnalysis); };
             FormClosing += (s, e) => Shutdown();
         }
@@ -239,7 +254,13 @@ namespace ShockDyno.App
                     : new SerialDynoLink(port);
                 link.SamplesReceived += s => Ui(() => OnSamples(link, s));
                 link.StatusReceived += st => Ui(() => OnStatus(link, st));
-                link.AckReceived += (id, r) => Ui(() => { if (link == _link && _runner != null) _runner.OnAck(id, r); });
+                link.AckReceived += (id, r) => Ui(() =>
+                {
+                    if (link != _link) return;
+                    if (_runner != null) _runner.OnAck(id, r);
+                    if (_parker != null && !_parker.Done && r != CommandResult.Ok && (id == EventId.MotorRun || id == EventId.MotorSetFreq))
+                        _parker.Cancel("motor command refused: " + DynoStatus.Describe(r));
+                });
                 link.Disconnected += reason => Ui(() => { if (link == _link) Disconnect("Connection lost: " + reason); });
                 link.Open();
                 _link = link;
@@ -259,6 +280,7 @@ namespace ShockDyno.App
         void Disconnect(string why)
         {
             if (_runner != null && _runner.IsActive) _runner.Stop(why);
+            if (_parker != null && !_parker.Done) _parker.Cancel(why);
             if (_link != null) { try { _link.MotorStop(); _link.Close(); } catch (Exception) { } _link = null; }
             _status = null;
             Say(why);
@@ -277,6 +299,7 @@ namespace ShockDyno.App
         {
             _uiTimer.Stop();
             if (_runner != null && _runner.IsActive) _runner.Stop("Application closed");
+            if (_parker != null && !_parker.Done) _parker.Cancel("application closed");
             if (_link != null) { try { _link.MotorStop(); _link.Close(); } catch (Exception) { } _link = null; }
             if (_selfTest == null)
             {
@@ -292,6 +315,16 @@ namespace ShockDyno.App
             {
                 _recent.Enqueue(s); _sumF += s.Force; _sumP += s.Position;
                 if (_recent.Count > 250) { RawSample old = _recent.Dequeue(); _sumF -= old.Force; _sumP -= old.Position; }
+                if (_liveHaveT) _liveT += unchecked(s.TimeUs - _liveLastUs) / 1e6;
+                _liveLastUs = s.TimeUs; _liveHaveT = true;
+                _liveBuf.Enqueue(new[] { _liveT, _set.ForceN(s.Force), _set.PositionMm(s.Position) });
+                while (_liveBuf.Count > 0 && _liveBuf.Peek()[0] < _liveT - 10) _liveBuf.Dequeue();
+                if (_parker != null && !_parker.Done)
+                {
+                    if (_parkHaveT) _parkT += unchecked(s.TimeUs - _parkLastUs) / 1e6;
+                    _parkLastUs = s.TimeUs; _parkHaveT = true;
+                    _parker.Feed(_parkT, _set.PositionMm(s.Position));
+                }
             }
             if (_runner != null) _runner.OnSamples(samples);
         }
@@ -303,6 +336,11 @@ namespace ShockDyno.App
             _status = st; _lastStatus = DateTime.Now;
             if (newFault) Say("FAULT: " + DynoStatus.Describe(st.Fault));
             if (_runner != null) _runner.OnStatus(st);
+            if (_parker != null && !_parker.Done)
+            {
+                if (st.State == MachineState.Fault) _parker.Cancel(DynoStatus.Describe(st.Fault));
+                else _parker.OnStatus(st);
+            }
         }
 
         double[] RawAverage()
@@ -344,9 +382,13 @@ namespace ShockDyno.App
                 _position.Text = string.Format("{0:0.00} {1}", Units.Length(_set.PositionMm(r[1]), u), Units.LengthUnit(u));
             }
             else _force.Text = _position.Text = "-";
-            _start.Enabled = connected && !running && _status != null && _status.State != MachineState.Fault;
+            bool parking = _parker != null && !_parker.Done;
+            _start.Enabled = connected && !running && !parking && _status != null && _status.State != MachineState.Fault;
+            _findBdc.Enabled = _start.Enabled;
+            _findBdc.Text = parking ? (_parker.Seeking ? "Finding bottom dead centre..." : "Going to bottom dead centre...") : "Find bottom dead centre";
+            if (_tabs.SelectedTab == _liveTab) DrawLiveSignals();
             _stop.Enabled = connected;
-            _tare.Enabled = connected && !running;
+            _tare.Enabled = connected && !running && !parking;
             _clear.Enabled = connected && _status != null && _status.State == MachineState.Fault;
             _grid.ReadOnly = running;
         }
@@ -420,7 +462,7 @@ namespace ShockDyno.App
         // ------------------------------------------------------------------ test
         void StartTest()
         {
-            if (_link == null || (_runner != null && _runner.IsActive)) return;
+            if (_link == null || (_runner != null && _runner.IsActive) || (_parker != null && !_parker.Done)) return;
             TestSequence q;
             try { q = SequenceFromGrid(); }
             catch (FormatException ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
@@ -445,9 +487,55 @@ namespace ShockDyno.App
             UpdateUi();
         }
 
+        void FindBdc()
+        {
+            if (_link == null || (_runner != null && _runner.IsActive) || (_parker != null && !_parker.Done)) return;
+            if (_status != null && !_status.SafetyOk)
+            {
+                MessageBox.Show(this, "The safety circuit is open.\nClose the door, release the emergency stop and press the reset button on the machine.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            SendLimits();
+            _parker = new BdcParker(_link, _set);
+            _parker.Log += Say;
+            _parkT = 0; _parkHaveT = false;
+            _parker.Start(0, false, double.NaN, double.NaN, 1);
+            UpdateUi();
+        }
+
+        void DrawLiveSignals()
+        {
+            UnitSystem u = _set.Units;
+            int n = _liveBuf.Count;
+            _plotLiveF.Series.Clear(); _plotLiveX.Series.Clear();
+            _plotLiveF.XLabel = _plotLiveX.XLabel = "Time (s), last 10 s";
+            _plotLiveF.YLabel = "Force (" + Units.ForceUnit(u) + "),  + compression";
+            _plotLiveX.YLabel = "Position (" + Units.LengthUnit(u) + ")";
+            if (n == 0) { _plotLiveF.Title = "Force: no data"; _plotLiveX.Title = "Position: no data"; _plotLiveF.Invalidate(); _plotLiveX.Invalidate(); return; }
+            var t = new double[n]; var f = new double[n]; var x = new double[n];
+            int i = 0; double tEnd = _liveT;
+            double fMin = double.MaxValue, fMax = double.MinValue, xMin = double.MaxValue, xMax = double.MinValue, fSum = 0, xSum = 0; int n1 = 0;
+            foreach (double[] r in _liveBuf)
+            {
+                t[i] = r[0] - tEnd; f[i] = Units.Force(r[1], u); x[i] = Units.Length(r[2], u);
+                if (r[0] >= tEnd - 1)          // statistics over the last second
+                {
+                    fMin = Math.Min(fMin, f[i]); fMax = Math.Max(fMax, f[i]); xMin = Math.Min(xMin, x[i]); xMax = Math.Max(xMax, x[i]);
+                    fSum += f[i]; xSum += x[i]; n1++;
+                }
+                i++;
+            }
+            _plotLiveF.Series.Add(new PlotSeries { X = t, Y = f, Color = PlotControl.Palette[1], Width = 1f });
+            _plotLiveX.Series.Add(new PlotSeries { X = t, Y = x, Color = PlotControl.Palette[0], Width = 1f });
+            _plotLiveF.Title = string.Format("Force {0:0.0} {1}  (last 1 s: mean {2:0.0}, noise {3:0.0} {1} peak to peak)", f[n - 1], Units.ForceUnit(u), fSum / n1, fMax - fMin);
+            _plotLiveX.Title = string.Format("Position {0:0.00} {1}  (last 1 s: mean {2:0.00}, noise {3:0.000} {1} peak to peak)", x[n - 1], Units.LengthUnit(u), xSum / n1, xMax - xMin);
+            _plotLiveF.Invalidate(); _plotLiveX.Invalidate();
+        }
+
         void StopTest()
         {
             if (_runner != null && _runner.IsActive) _runner.Stop("Stopped by the operator");
+            else if (_parker != null && !_parker.Done) _parker.Cancel("stopped by the operator");
             else if (_link != null) _link.MotorStop();
             UpdateUi();
         }
@@ -484,13 +572,13 @@ namespace ShockDyno.App
                 t.Tick += (s, e) =>
                 {
                     t.Stop();
-                    foreach (int tab in new[] { 1, 2, 0 })
+                    foreach (int tab in new[] { 4, 1, 2, 0 })
                     {
-                        _tabs.SelectedIndex = tab; Refresh(); Application.DoEvents();
+                        _tabs.SelectedIndex = tab; if (tab == 4) DrawLiveSignals(); Refresh(); Application.DoEvents();
                         using (var bmp = new Bitmap(ClientSize.Width, ClientSize.Height))
                         {
                             using (Graphics g = Graphics.FromImage(bmp)) g.CopyFromScreen(PointToScreen(Point.Empty), Point.Empty, ClientSize);
-                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + (tab == 1 ? "_fv.png" : "_peak.png"));
+                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + (tab == 1 ? "_fv.png" : tab == 4 ? "_live.png" : "_peak.png"));
                         }
                     }
                     Close();
@@ -524,7 +612,7 @@ namespace ShockDyno.App
                 {
                     X = Conv(c.X, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)),
                     Color = PlotControl.Palette[c.Step % PlotControl.Palette.Length],
-                    Name = first ? SpeedName(q.Steps[c.Step].SpeedMmS) : null,
+                    Name = first ? SpeedName(q.Steps[c.Step].SpeedMmS, _runner != null ? _runner.StepMotorHz(c.Step) : 0) : null,
                 });
             }
             if (_liveLast != null)
@@ -533,9 +621,10 @@ namespace ShockDyno.App
             _plotFx.Invalidate();
         }
 
-        string SpeedName(double mmS)
+        string SpeedName(double mmS, double motorHz)
         {
-            return string.Format("{0:0.##} {1}", Units.Length(mmS, _set.Units), Units.SpeedUnit(_set.Units));
+            string v = string.Format("{0:0.##} {1}", Units.Length(mmS, _set.Units), Units.SpeedUnit(_set.Units));
+            return motorHz > 0 ? string.Format("{0}  ({1:0.00} Hz)", v, motorHz) : v;
         }
 
         static double[] Conv(double[] a, Func<double, double> f)
@@ -631,7 +720,7 @@ namespace ShockDyno.App
                 {
                     ProcessedCycle c = r.Cycles[r.Cycles.Count - 1];
                     Color col = single ? PlotControl.Palette[r.Step % PlotControl.Palette.Length] : testColor;
-                    string name = single ? SpeedName(r.TargetSpeed) : (first ? h.Display : null);
+                    string name = single ? SpeedName(r.TargetSpeed, r.MotorHz) : (first ? h.Display : null);
                     first = false;
                     _plotFx.Series.Add(new PlotSeries { X = Conv(c.X, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
                     _plotFv.Series.Add(new PlotSeries { X = Conv(c.V, sx), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });

@@ -25,6 +25,7 @@ static class Program
         TestFullRun(25, 6);
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
+        TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : _failed + " TEST(S) FAILED");
@@ -171,6 +172,26 @@ static class Program
     static double Model(double v, double c1, double knee, double c2)
     {
         return (v <= knee ? c1 * v : c1 * knee + c2 * (v - knee)) + 15 * Math.Tanh(v / 2);
+    }
+
+    static void TestFindBdc()
+    {
+        Console.WriteLine("Find bottom dead centre (button)");
+        foreach (double start in new[] { 0.3, 2.0, 4.0, 5.9 })
+        {
+            var rig = new Rig(50);
+            rig.Sim.SetCrankAngle(start);
+            var parker = new BdcParker(rig.Sim, rig.Set);
+            var log = new List<string>();
+            parker.Log += log.Add;
+            double t = 0; uint last = 0; bool have = false;
+            rig.Sim.SamplesReceived += smp => { foreach (RawSample r in smp) { if (have) t += unchecked(r.TimeUs - last) / 1e6; last = r.TimeUs; have = true; parker.Feed(t, rig.Set.PositionMm(r.Position)); } };
+            rig.Sim.StatusReceived += parker.OnStatus;
+            parker.Start(0, false, double.NaN, double.NaN, 1);
+            for (double s = 0; s < 120 && !parker.Done; s += 0.02) rig.Sim.Step(0.02);
+            double x = rig.Sim.CrankAboveBdcMm;
+            Check(parker.Done && x < 1.0, string.Format("from {0:0.0} rad: stopped {1:0.00} mm above BDC ({2})", start, x, log.Count > 0 ? log[log.Count - 1] : "no log"));
+        }
     }
 
     static void TestSafetyTrip()
