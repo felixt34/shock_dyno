@@ -51,14 +51,24 @@ namespace ShockDyno.Core
         [Category("5. Analysis"), Description("True: speed graphs use the speed magnitude, so compression and rebound are both at positive speed (force keeps its sign: compression above zero, rebound below). False: signed velocity, + compression.")]
         public bool AbsoluteSpeed { get; set; }
 
-        [Category("6. Sensor calibration"), Description("Newtons per ADC count. Negative if compression reads negative. Set from the Sensor calibration window.")]
+        [SensorCalibration, Category("6. Sensor calibration"), Description("Newtons per ADC count. Negative if compression reads negative. Set from the Sensor calibration window.")]
         public double ForceNPerCount { get; set; }
-        [Category("6. Sensor calibration"), Description("ADC counts at zero force (set by Tare).")]
+        [SensorCalibration, Category("6. Sensor calibration"), Description("ADC counts at zero force (set by Tare).")]
         public double ForceZeroCounts { get; set; }
-        [Category("6. Sensor calibration"), Description("Millimetres per ADC count. Negative if compression reads as a decreasing value.")]
+        [SensorCalibration, Category("6. Sensor calibration"), Description("Millimetres per ADC count. Negative if compression reads as a decreasing value.")]
         public double PositionMmPerCount { get; set; }
-        [Category("6. Sensor calibration"), Description("ADC counts at position 0 mm.")]
+        [SensorCalibration, Category("6. Sensor calibration"), Description("ADC counts at position 0 mm.")]
         public double PositionZeroCounts { get; set; }
+        [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the force zero (Tare / Zero) was last set."), ReadOnly(true)]
+        public string ForceZeroInfo { get; set; }
+        [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the force gain was last set."), ReadOnly(true)]
+        public string ForceGainInfo { get; set; }
+        [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the position calibration was last set."), ReadOnly(true)]
+        public string PositionInfo { get; set; }
+
+        /// <summary>The sensor calibration file, in the data folder.</summary>
+        [Browsable(false)]
+        public string CalibrationPath { get { return Path.Combine(DataFolder ?? "", "sensor_calibration.ini"); } }
 
         public Settings()
         {
@@ -101,7 +111,7 @@ namespace ShockDyno.Core
             var lines = new List<string>();
             foreach (PropertyInfo p in GetType().GetProperties())
             {
-                if (!p.CanWrite) continue;
+                if (!p.CanWrite || p.IsDefined(typeof(SensorCalibrationAttribute), false)) continue;   // in their own file
                 lines.Add(p.Name + "=" + Convert.ToString(p.GetValue(this, null), CultureInfo.InvariantCulture));
             }
             File.WriteAllLines(path, lines.ToArray());
@@ -110,13 +120,64 @@ namespace ShockDyno.Core
         public static Settings Load(string path)
         {
             var s = new Settings();
-            if (!File.Exists(path)) return s;
-            foreach (string line in File.ReadAllLines(path))
+            if (File.Exists(path)) s.Apply(File.ReadAllLines(path), false);   // older files also hold the sensor calibration
+            return s;
+        }
+
+        /// <summary>Saves the sensor calibration (and when / how it was made) to its own file.</summary>
+        public void SaveCalibration(string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            var lines = new List<string> {
+                "# DynamiX shock dyno - sensor calibration",
+                "# Written by the application (Tools > Sensor calibration, Tare). Values in ADC counts.",
+                "# force N  = (counts - ForceZeroCounts) * ForceNPerCount",
+                "# position mm = (counts - PositionZeroCounts) * PositionMmPerCount",
+                "# Saved " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            };
+            foreach (PropertyInfo p in GetType().GetProperties())
+                if (p.CanWrite && p.IsDefined(typeof(SensorCalibrationAttribute), false))
+                {
+                    object v = p.GetValue(this, null);
+                    lines.Add(p.Name + "=" + (v is double ? ((double)v).ToString("R", CultureInfo.InvariantCulture) : Convert.ToString(v, CultureInfo.InvariantCulture)));
+                }
+            File.WriteAllLines(path, lines.ToArray());
+        }
+
+        /// <summary>Reads a sensor calibration file. False if it does not exist.</summary>
+        public bool LoadCalibration(string path)
+        {
+            if (!File.Exists(path)) return false;
+            Apply(File.ReadAllLines(path), true);
+            return true;
+        }
+
+        /// <summary>Appends the current calibration to sensor_calibration_history.csv next to the calibration file.</summary>
+        public void AppendCalibrationHistory(string path, string what)
+        {
+            string h = Path.Combine(Path.GetDirectoryName(path), "sensor_calibration_history.csv");
+            bool header = !File.Exists(h);
+            using (var w = new StreamWriter(h, true))
             {
+                if (header) w.WriteLine("date,change,ForceNPerCount,ForceZeroCounts,PositionMmPerCount,PositionZeroCounts");
+                w.WriteLine(string.Join(",", new[] {
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture), "\"" + (what ?? "").Replace("\"", "'") + "\"",
+                    ForceNPerCount.ToString("R", CultureInfo.InvariantCulture), ForceZeroCounts.ToString("R", CultureInfo.InvariantCulture),
+                    PositionMmPerCount.ToString("R", CultureInfo.InvariantCulture), PositionZeroCounts.ToString("R", CultureInfo.InvariantCulture) }));
+            }
+        }
+
+        void Apply(string[] fileLines, bool calibrationOnly)
+        {
+            var s = this;
+            foreach (string line in fileLines)
+            {
+                if (line.StartsWith("#")) continue;
                 int eq = line.IndexOf('=');
                 if (eq <= 0) continue;
                 PropertyInfo p = typeof(Settings).GetProperty(line.Substring(0, eq).Trim());
                 if (p == null || !p.CanWrite) continue;
+                if (calibrationOnly && !p.IsDefined(typeof(SensorCalibrationAttribute), false)) continue;
                 string v = line.Substring(eq + 1).Trim();
                 try
                 {
@@ -126,9 +187,12 @@ namespace ShockDyno.Core
                 }
                 catch (Exception) { /* keep the default for an unreadable value */ }
             }
-            return s;
         }
     }
+
+    /// <summary>Marks the settings stored in the sensor calibration file instead of settings.ini.</summary>
+    [AttributeUsage(AttributeTargets.Property)]
+    public class SensorCalibrationAttribute : Attribute { }
 
     /// <summary>Unit conversion for display and export. Internally everything is N, mm, mm/s.</summary>
     public static class Units

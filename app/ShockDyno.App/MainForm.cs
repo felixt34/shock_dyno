@@ -69,6 +69,7 @@ namespace ShockDyno.App
             _selfTest = selfTest;
             _set = Settings.Load(Settings.DefaultPath);
             if (selfTest != null) _set = new Settings { DataFolder = Path.Combine(Path.GetTempPath(), "ShockDynoSelfTest") };
+            else LoadSensorCalibration();
             Text = "DynamiX shock dyno";
             ClientSize = new Size(1400, 860);
             MinimumSize = new Size(1100, 700);
@@ -591,8 +592,35 @@ namespace ShockDyno.App
         {
             if (_link == null || _recent.Count < 50) return;
             _set.ForceZeroCounts = RawAverage()[0];
+            _set.ForceZeroInfo = Stamp() + "Tare";
+            SaveSensorCalibration("tare");
             SendLimits();
             Say("Force zeroed");
+        }
+
+        // ------------------------------------------------------------------ sensor calibration file
+        static string Stamp() { return DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + ", "; }
+
+        void LoadSensorCalibration()
+        {
+            try
+            {
+                if (_set.LoadCalibration(_set.CalibrationPath)) return;
+                _set.SaveCalibration(_set.CalibrationPath);     // first run: move the values from settings.ini to their own file
+            }
+            catch (Exception ex) { MessageBox.Show(this, "Could not read the sensor calibration file:\n" + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        }
+
+        void SaveSensorCalibration(string what)
+        {
+            if (_selfTest != null) return;
+            try
+            {
+                _set.SaveCalibration(_set.CalibrationPath);
+                _set.AppendCalibrationHistory(_set.CalibrationPath, what);
+                _set.Save(Settings.DefaultPath);
+            }
+            catch (Exception ex) { Say("Could not save the sensor calibration: " + ex.Message); }
         }
 
         // ------------------------------------------------------------------ live graph (force vs position)
@@ -776,8 +804,18 @@ namespace ShockDyno.App
         void ShowSettings()
         {
             if (_runner != null && _runner.IsActive) { MessageBox.Show(this, "Stop the test before changing settings.", Text); return; }
+            string folder = _set.DataFolder;
+            double[] cal = { _set.ForceNPerCount, _set.ForceZeroCounts, _set.PositionMmPerCount, _set.PositionZeroCounts };
             using (var f = new SettingsForm(_set)) f.ShowDialog(this);
             try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
+            bool calChanged = cal[0] != _set.ForceNPerCount || cal[1] != _set.ForceZeroCounts || cal[2] != _set.PositionMmPerCount || cal[3] != _set.PositionZeroCounts;
+            if (calChanged) SaveSensorCalibration("edited in Settings");
+            else if (folder != _set.DataFolder && _selfTest == null)
+            {
+                // new data folder: use its calibration file if it has one, otherwise copy the current calibration there
+                try { if (!_set.LoadCalibration(_set.CalibrationPath)) _set.SaveCalibration(_set.CalibrationPath); else Say("Sensor calibration loaded from the new data folder"); }
+                catch (Exception ex) { Say("Sensor calibration file: " + ex.Message); }
+            }
             SendLimits();
             _absSpeed.Checked = _set.AbsoluteSpeed;
             RefreshHistory();
@@ -791,10 +829,10 @@ namespace ShockDyno.App
             {
                 f.ShowDialog(this);
                 if (!f.Changed) return;
+                SaveSensorCalibration(string.Join("; ", f.Changes.ToArray()));
             }
-            try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
             SendLimits();
-            Say("Sensor calibration updated");
+            Say("Sensor calibration updated and saved to " + _set.CalibrationPath);
         }
     }
 }

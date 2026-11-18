@@ -26,6 +26,7 @@ static class Program
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
         TestFullRun(25, 6, 0.5);  // slow drive ramp: cycles during the ramp must not count
+        TestCalibrationFile();
         TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
@@ -174,6 +175,26 @@ static class Program
     static double Model(double v, double c1, double knee, double c2)
     {
         return (v <= knee ? c1 * v : c1 * knee + c2 * (v - knee)) + 15 * Math.Tanh(v / 2);
+    }
+
+    static void TestCalibrationFile()
+    {
+        Console.WriteLine("Sensor calibration file");
+        string dir = Path.Combine(Path.GetTempPath(), "dyno_cal_test");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        var a = new Settings { DataFolder = dir, ForceNPerCount = -0.0047123456789, ForceZeroCounts = 12345.5, PositionMmPerCount = 5.28e-5, PositionZeroCounts = -98765, ForceGainInfo = "2026-11-17, gain with 134.75 N" };
+        a.SaveCalibration(a.CalibrationPath);
+        a.AppendCalibrationHistory(a.CalibrationPath, "force gain");
+        var b = new Settings { DataFolder = dir };
+        bool ok = b.LoadCalibration(b.CalibrationPath);
+        Check(ok && b.ForceNPerCount == a.ForceNPerCount && b.ForceZeroCounts == a.ForceZeroCounts && b.PositionMmPerCount == a.PositionMmPerCount
+              && b.PositionZeroCounts == a.PositionZeroCounts && b.ForceGainInfo == a.ForceGainInfo, "calibration file saves and loads exactly");
+        string ini = Path.Combine(dir, "settings.ini");
+        a.Save(ini);
+        Check(!File.ReadAllText(ini).Contains("ForceNPerCount"), "settings.ini no longer holds the calibration");
+        File.AppendAllText(ini, "ForceNPerCount=0.0123\n");                       // an older settings.ini still loads its values
+        Check(Settings.Load(ini).ForceNPerCount == 0.0123, "older settings.ini with calibration values still loads");
+        Check(File.ReadAllLines(Path.Combine(dir, "sensor_calibration_history.csv")).Length == 2, "history file written");
     }
 
     static void TestFindBdc()
