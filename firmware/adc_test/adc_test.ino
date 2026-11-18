@@ -5,9 +5,10 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-// Input buffer of the force ADC (STATUS register). 0x06 = buffer on (as in the main firmware),
-// 0x02 = buffer off. With the buffer on, both inputs must stay between 0 and AVDD - 2 V (about 3 V).
-const uint8_t FORCE_STATUS = 0x06;
+// Input buffer of the force ADC (STATUS register). 0x02 = buffer off (as in the main firmware),
+// 0x06 = buffer on. With the buffer on, both inputs must stay below AVDD - 2 V, which clipped
+// the load cell signals on these boards.
+const uint8_t FORCE_STATUS = 0x02;
 
 struct Adc {
   const char* name;
@@ -21,7 +22,7 @@ struct Adc {
 SPIClass spiA(VSPI), spiB(HSPI);
 Adc adcs[2] = {
   { "ADS #1 (force)",    &spiA, 18, 19, 23, 25,  5, 27, 26, 0x06, FORCE_STATUS, false },
-  { "ADS #2 (position)", &spiB, 14, 34, 13, 33, 32, 22, 21, 0x00, 0x06, false },
+  { "ADS #2 (position)", &spiB, 14, 34, 13, 33, 32, 22, 21, 0x00, 0x02, false },
 };
 
 const SPISettings kSpi(1000000, MSBFIRST, SPI_MODE1);

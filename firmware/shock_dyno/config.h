@@ -28,7 +28,11 @@
 #define ADC1_ADCON            0x06      // force:    PGA 64, clock out off
 #define ADC2_ADCON            0x00      // position: PGA 1,  clock out off
 #define ADC_MUX               0x01      // AIN0 (+) / AIN1 (-)  = board terminals AIN1 / AIN2
-#define ADC_STATUS            0x06      // MSB first, auto-calibration on, input buffer on
+#define ADC_STATUS            0x02      // MSB first, auto-calibration on, input buffer OFF.
+// With the buffer on, the inputs must stay below AVDD - 2 V; on these boards that clipped the
+// load cell signals (about 2.5 V each) and the force read about 40x too small. Measured
+// 2026-11-17: buffer off gives the expected 0.27 mV for 134.75 N. The lower input impedance
+// without the buffer is a small fixed gain error that the sensor calibration takes out.
 
 // ---------- MAX485 / VFD (Modbus RTU on UART2) ----------
 #define PIN_RS485_TX          17
