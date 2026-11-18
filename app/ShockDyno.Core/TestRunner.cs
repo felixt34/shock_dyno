@@ -27,11 +27,17 @@ namespace ShockDyno.Core
         uint _lastUs;
         double _t;
         int _lastBdc = -1, _commandIndex, _fullCyclesSinceCommand, _consistentOffTarget;
-        double _prevPeriod, _expectedPeriod, _commandTime, _lastProgressTime, _motorHz;
+        double _prevPeriod, _prevPeriod2, _prevPeriod3, _expectedPeriod, _commandTime, _lastProgressTime, _motorHz;
         double _speedFactor = 1;   // actual crank speed / nominal crank speed (motor slip, ratio error)
 
         BdcParker _parker;                // return to bottom dead centre after the last step
         double _driveHz = double.NaN;     // last output frequency reported by the drive
+        // Constant speed: the drive reports the commanded frequency (its acceleration ramp is over).
+        // Only cycles that start after this (plus the polling delay) are measured or used for the speed factor.
+        double _atSpeedSince = double.NaN;
+        bool _driveRefLost;               // the drive never reached the commanded frequency: fall back on cycle periods
+        const double DriveReportDelayS = 0.4;
+        double _driveHzSettled = double.NaN, _driveHzSettledSince;   // to tell a slow ramp from a drive stuck off target
 
         public RunPhase Phase { get; private set; }
         public int CurrentStep { get; private set; }
@@ -108,7 +114,14 @@ namespace ShockDyno.Core
         public void OnStatus(DynoStatus st)
         {
             if (IsActive && st.State == MachineState.Fault) { Abort(DynoStatus.Describe(st.Fault)); return; }
-            if (st.VfdOk) _driveHz = st.VfdHz;
+            if (st.VfdOk)
+            {
+                _driveHz = st.VfdHz;
+                if (double.IsNaN(_driveHzSettled) || Math.Abs(st.VfdHz - _driveHzSettled) > 0.05) { _driveHzSettled = st.VfdHz; _driveHzSettledSince = _t; }
+                bool there = Math.Abs(st.VfdHz - _motorHz) <= 0.05 + 0.005 * _motorHz;
+                if (!there) _atSpeedSince = double.NaN;
+                else if (double.IsNaN(_atSpeedSince)) _atSpeedSince = _t;
+            }
             if (Phase == RunPhase.Parking) _parker.OnStatus(st);
         }
 
@@ -116,6 +129,27 @@ namespace ShockDyno.Core
         {
             if (IsActive && result != CommandResult.Ok && (id == EventId.MotorRun || id == EventId.MotorSetFreq))
                 Abort("Motor command refused: " + DynoStatus.Describe(result));
+        }
+
+        /// <summary>
+        /// True when the whole cycle starting at cycleStart ran at the commanded frequency. Uses the drive's
+        /// reported output frequency, so cycles during the drive's acceleration ramp never count, however
+        /// slow the ramp. Without a drive frequency (or if it never matches) it falls back on the cycle
+        /// periods: three in a row within 1 %.
+        /// </summary>
+        bool AtConstantSpeed(double cycleStart, double period)
+        {
+            if (!_driveRefLost && !double.IsNaN(_driveHz))
+            {
+                if (!double.IsNaN(_atSpeedSince) && cycleStart >= _atSpeedSince + DriveReportDelayS) return true;
+                // Still ramping (reported frequency moving) or only just settled: wait.
+                if (_t - _driveHzSettledSince < 10 + 3 * _expectedPeriod) return false;
+                _driveRefLost = true;
+                Say(string.Format("Warning: the drive reports {0:0.00} Hz for {1:0.00} Hz commanded; using cycle periods to detect constant speed",
+                    _driveHz, _motorHz));
+            }
+            // this cycle and the two before it all within 1 %
+            return _fullCyclesSinceCommand >= 3 && Math.Abs(period - _prevPeriod2) / period < 0.01 && Math.Abs(period - _prevPeriod3) / period < 0.01;
         }
 
         // ------------------------------------------------------------------ return to bottom dead centre
@@ -147,7 +181,8 @@ namespace ShockDyno.Core
             _fullCyclesSinceCommand++;
             bool nearTarget = Math.Abs(period - _expectedPeriod) / _expectedPeriod < _set.SpeedTolerancePct / 100.0;
             bool steady = _fullCyclesSinceCommand >= 2 && Math.Abs(period - _prevPeriod) / period < 0.02;
-            _prevPeriod = period;
+            _prevPeriod3 = _prevPeriod2; _prevPeriod2 = _prevPeriod; _prevPeriod = period;   // _prevPeriod is now this cycle
+            steady = steady && AtConstantSpeed(_samples[prev].T, period);
 
             if (Phase == RunPhase.Calibrating)
             {
@@ -236,6 +271,7 @@ namespace ShockDyno.Core
             _commandIndex = _samples.Count;
             _commandTime = _t; _lastProgressTime = _t;
             _fullCyclesSinceCommand = 0; _consistentOffTarget = 0;
+            _atSpeedSince = double.NaN;
             _stepCycles.Clear(); _stepPeriods.Clear();
             if (start) _link.MotorRun(hz); else _link.MotorSetFreq(hz);
         }

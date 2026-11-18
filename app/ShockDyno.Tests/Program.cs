@@ -25,6 +25,7 @@ static class Program
         TestFullRun(25, 6);
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
+        TestFullRun(25, 6, 0.5);  // slow drive ramp: cycles during the ramp must not count
         TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
@@ -127,10 +128,11 @@ static class Program
         }
     }
 
-    static void TestFullRun(double amplitude, int expectedSteps)
+    static void TestFullRun(double amplitude, int expectedSteps, double rampHzPerS = 10)
     {
-        Console.WriteLine("Full test, amplitude " + amplitude + " mm");
+        Console.WriteLine("Full test, amplitude " + amplitude + " mm, drive ramp " + rampHzPerS + " Hz/s");
         var rig = new Rig(amplitude);
+        rig.Sim.RampHzPerS = rampHzPerS;
         rig.Runner.Start();
         rig.Run(900);
         Check(rig.Success == true, "test completes (" + rig.Message + ")");

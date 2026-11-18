@@ -58,7 +58,7 @@ namespace ShockDyno.App
         readonly TabControl _tabs = new TabControl { Dock = DockStyle.Fill };
         readonly PlotControl _plotFx = new PlotControl { Dock = DockStyle.Fill }, _plotFv = new PlotControl { Dock = DockStyle.Fill },
                              _plotPeak = new PlotControl { Dock = DockStyle.Fill }, _plotTimeF = new PlotControl { Dock = DockStyle.Fill },
-                             _plotTimeX = new PlotControl { Dock = DockStyle.Fill };
+                             _plotTimeX = new PlotControl { Dock = DockStyle.Fill }, _plotTimeV = new PlotControl { Dock = DockStyle.Fill };
         readonly CheckedListBox _history = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false };
         readonly ToolStripStatusLabel _statusText = new ToolStripStatusLabel("Not connected");
         readonly Timer _uiTimer = new Timer { Interval = 200 };
@@ -130,9 +130,9 @@ namespace ShockDyno.App
             _tabs.TabPages.Add(Page("Force vs position", _plotFx));
             _tabs.TabPages.Add(Page("Force vs velocity", _plotFv));
             _tabs.TabPages.Add(Page("Peak force vs peak velocity", _plotPeak));
-            var split = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-            split.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); split.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            split.Controls.Add(_plotTimeF, 0, 0); split.Controls.Add(_plotTimeX, 0, 1);
+            var split = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+            for (int r = 0; r < 3; r++) split.RowStyles.Add(new RowStyle(SizeType.Percent, 33.3f));
+            split.Controls.Add(_plotTimeF, 0, 0); split.Controls.Add(_plotTimeX, 0, 1); split.Controls.Add(_plotTimeV, 0, 2);
             _tabs.TabPages.Add(Page("Time", split));
             var liveSplit = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
             liveSplit.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); liveSplit.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
@@ -572,13 +572,13 @@ namespace ShockDyno.App
                 t.Tick += (s, e) =>
                 {
                     t.Stop();
-                    foreach (int tab in new[] { 4, 1, 2, 0 })
+                    foreach (int tab in new[] { 3, 4, 1, 2, 0 })
                     {
                         _tabs.SelectedIndex = tab; if (tab == 4) DrawLiveSignals(); Refresh(); Application.DoEvents();
                         using (var bmp = new Bitmap(ClientSize.Width, ClientSize.Height))
                         {
                             using (Graphics g = Graphics.FromImage(bmp)) g.CopyFromScreen(PointToScreen(Point.Empty), Point.Empty, ClientSize);
-                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + (tab == 1 ? "_fv.png" : tab == 4 ? "_live.png" : "_peak.png"));
+                            bmp.Save(tab == 0 ? _selfTest : Path.ChangeExtension(_selfTest, null) + (tab == 1 ? "_fv.png" : tab == 4 ? "_live.png" : tab == 3 ? "_time.png" : "_peak.png"));
                         }
                     }
                     Close();
@@ -646,6 +646,8 @@ namespace ShockDyno.App
             _plotPeak.Title = "Peak force vs peak velocity";
             _plotTimeF.XLabel = "Time (s)"; _plotTimeF.YLabel = "Force as measured (" + Units.ForceUnit(u) + ")"; _plotTimeF.Title = "Whole test";
             _plotTimeX.XLabel = "Time (s)"; _plotTimeX.YLabel = "Position (" + Units.LengthUnit(u) + ")";
+            _plotTimeV.XLabel = "Time (s)"; _plotTimeV.YLabel = "Speed (" + Units.SpeedUnit(u) + "),  + compression";
+            _plotTimeV.Title = "Speed (from the filtered position)";
         }
 
         // ------------------------------------------------------------------ history and analysis graphs
@@ -685,7 +687,7 @@ namespace ShockDyno.App
                 }
                 catch (Exception ex) { Say("Could not read " + Path.GetFileName(h.Path) + ": " + ex.Message); }
             }
-            _plotFx.Series.Clear(); _plotFv.Series.Clear(); _plotPeak.Series.Clear(); _plotTimeF.Series.Clear(); _plotTimeX.Series.Clear();
+            _plotFx.Series.Clear(); _plotFv.Series.Clear(); _plotPeak.Series.Clear(); _plotTimeF.Series.Clear(); _plotTimeX.Series.Clear(); _plotTimeV.Series.Clear();
             _plotFx.Title = "Force vs position (last cycle of each speed)";
             bool single = tests.Count == 1;
             for (int t = 0; t < tests.Count; t++)
@@ -730,14 +732,31 @@ namespace ShockDyno.App
             {
                 TestRecord rec = tests[0].Record;
                 int stride = Math.Max(1, rec.Samples.Count / 6000), n = (rec.Samples.Count + stride - 1) / stride;
-                var tt = new double[n]; var ff = new double[n]; var xx = new double[n];
-                for (int i = 0; i < n; i++) { Sample s = rec.Samples[i * stride]; tt[i] = s.T; ff[i] = Units.Force(s.F, u); xx[i] = Units.Length(s.X, u); }
+                double[] vel = WholeTestSpeed(rec);
+                var tt = new double[n]; var ff = new double[n]; var xx = new double[n]; var vv = new double[n];
+                for (int i = 0; i < n; i++)
+                {
+                    Sample s = rec.Samples[i * stride];
+                    tt[i] = s.T; ff[i] = Units.Force(s.F, u); xx[i] = Units.Length(s.X, u); vv[i] = Units.Length(vel[i * stride], u);
+                }
                 _plotTimeF.Series.Add(new PlotSeries { X = tt, Y = ff, Color = PlotControl.Palette[1], Width = 1f });
                 _plotTimeX.Series.Add(new PlotSeries { X = tt, Y = xx, Color = PlotControl.Palette[0], Width = 1f });
+                _plotTimeV.Series.Add(new PlotSeries { X = tt, Y = vv, Color = PlotControl.Palette[2], Width = 1f });
                 _plotTimeF.Title = "Whole test: " + tests[0].Display;
                 if (single && rec.Calibration.AmplitudeMm > 0) ShowCalibration(rec.Calibration);
             }
-            foreach (PlotControl p in new[] { _plotFx, _plotFv, _plotPeak, _plotTimeF, _plotTimeX }) p.Invalidate();
+            foreach (PlotControl p in new[] { _plotFx, _plotFv, _plotPeak, _plotTimeF, _plotTimeX, _plotTimeV }) p.Invalidate();
+        }
+
+        /// <summary>Speed over the whole test: position low-pass filtered (same cut-off as the analysis), then differentiated.</summary>
+        double[] WholeTestSpeed(TestRecord rec)
+        {
+            int n = rec.Samples.Count;
+            var t = new double[n]; var x = new double[n];
+            for (int i = 0; i < n; i++) { t[i] = rec.Samples[i].T; x[i] = rec.Samples[i].X; }
+            if (n < 10) return new double[n];
+            double fs = (n - 1) / Math.Max(1e-9, t[n - 1] - t[0]);
+            return Signal.Derivative(t, Signal.LowPassZeroPhase(x, _set.FilterCutoffHz, fs), 3);
         }
 
         void ExportSummary()
