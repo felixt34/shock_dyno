@@ -110,7 +110,7 @@ namespace ShockDyno.Core
                 c.T[i] = t[o + i] - t[o];
                 c.X[i] = x[o + i] - bdc;
                 c.V[i] = v[o + i];
-                c.F[i] = f[o + i] - (cal != null ? cal.StaticForce(c.X[i]) : 0);
+                c.F[i] = f[o + i] - (cal != null && set.RemoveStaticForce ? cal.StaticForce(c.X[i]) : 0);
             }
             return c;
         }

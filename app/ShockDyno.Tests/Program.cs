@@ -151,6 +151,21 @@ static class Program
         Check(err < 0.1 + 1.5 * lagS && err < 0.35 * errDc, string.Format("static slope {0:0.00} N/mm (model 0.40; dead centres alone {1:0.00})", c.StaticSlopeNPerMm, c.DeadCentreSlopeNPerMm));
         Check(Near(c.PreloadN, 150, 0.06), "preload " + c.PreloadN.ToString("0.0") + " N (model 150)");
         Check(Near(c.GasForceN, 160, 0.03), "gas force " + c.GasForceN.ToString("0.0") + " N (model 160)");
+        // raw view: the same cycles with the static force left in
+        TestRecord rec = rig.Runner.BuildRecord("raw", "");
+        rig.Set.RemoveStaticForce = true;
+        double removed = MeanForce(rec.Analyze(rig.Set));
+        rig.Set.RemoveStaticForce = false;
+        double raw = MeanForce(rec.Analyze(rig.Set));
+        rig.Set.RemoveStaticForce = true;
+        Check(Math.Abs(raw - removed - 160) < 10, string.Format("raw view keeps the static force: mean force {0:0} N raw, {1:0} N with it removed", raw, removed));
+    }
+
+    static double MeanForce(List<StepResult> res)
+    {
+        double sum = 0; int k = 0;
+        foreach (StepResult r in res) foreach (ProcessedCycle c in r.Cycles) foreach (double f in c.F) { sum += f; k++; }
+        return sum / Math.Max(1, k);
     }
 
     static void TestFullRun(double amplitude, int expectedSteps, double rampHzPerS = 10)

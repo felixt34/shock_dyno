@@ -96,6 +96,7 @@ namespace ShockDyno.App
             if (selfTest != null) Shown += (s, e) => { _ports.SelectedItem = SimulatorPort; ToggleConnection(); StartTest(); };
         }
 
+        readonly CheckBox _removeStatic = new CheckBox { Text = "Remove static force (preload and gas force)", AutoSize = true, Margin = new Padding(16, 5, 3, 0) };
         readonly CheckBox _absSpeed = new CheckBox { Text = "Speed graphs: positive speed in both compression and rebound", AutoSize = true, Margin = new Padding(4, 5, 3, 0) };
 
         static Label Value() { return new Label { Text = "-", Font = new Font("Segoe UI", 9f, FontStyle.Bold), AutoEllipsis = true }; }
@@ -126,7 +127,7 @@ namespace ShockDyno.App
                       Row(_start, _stop), Row(_tare, _clear), Row(_findBdc)),
                 Group("Test", Caption("Name (damper, settings)"), _name, Caption("Notes"), _notes),
                 Group("Sequence", _grid, Row(load, save, def)),
-                Group("Calibration cycle (removed from the graphs)", Pair("Amplitude", _amp), Pair("Preload (at BDC)", _preload), Pair("Gas force (mid-stroke)", _gas)) })
+                Group("Calibration cycle (static force)", Pair("Amplitude", _amp), Pair("Preload (at BDC)", _preload), Pair("Gas force (mid-stroke)", _gas)) })
             {
                 g.Location = new Point(6, top);
                 top += g.Height + 6;
@@ -205,7 +206,16 @@ namespace ShockDyno.App
                 try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
                 RefreshAnalysis();
             };
-            centre.Controls.Add(_absSpeed, 0, 0); centre.Controls.Add(_tabs, 0, 1); centre.Controls.Add(_log, 0, 2);
+            _removeStatic.Checked = _set.RemoveStaticForce;
+            _removeStatic.CheckedChanged += (s, e) =>
+            {
+                _set.RemoveStaticForce = _removeStatic.Checked;
+                try { _set.Save(Settings.DefaultPath); } catch (Exception ex) { Say("Could not save settings: " + ex.Message); }
+                RefreshAnalysis();
+            };
+            var options = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
+            options.Controls.Add(_absSpeed); options.Controls.Add(_removeStatic);
+            centre.Controls.Add(options, 0, 0); centre.Controls.Add(_tabs, 0, 1); centre.Controls.Add(_log, 0, 2);
             root.Controls.Add(left, 0, 0); root.Controls.Add(centre, 1, 0); root.Controls.Add(right, 2, 0);
 
             var status = new StatusStrip();
@@ -723,12 +733,12 @@ namespace ShockDyno.App
         void SetLabels()
         {
             UnitSystem u = _set.Units;
-            string f = "Force (" + Units.ForceUnit(u) + "),  + compression", x = "Position above bottom dead centre (" + Units.LengthUnit(u) + ")";
+            string f = (_set.RemoveStaticForce ? "Damping force, static force removed (" : "Force as measured (") + Units.ForceUnit(u) + "),  + compression", x = "Position above bottom dead centre (" + Units.LengthUnit(u) + ")";
             string v = _set.AbsoluteSpeed ? "Speed (" + Units.SpeedUnit(u) + "),  compression and rebound both +"
                                           : "Velocity (" + Units.SpeedUnit(u) + "),  + compression";
             _plotFx.XLabel = x; _plotFx.YLabel = f;
             _plotFv.XLabel = v; _plotFv.YLabel = f; _plotFv.Title = "Force vs velocity (last cycle of each speed)";
-            _plotPeak.XLabel = "Peak " + v.Substring(0, 1).ToLower() + v.Substring(1); _plotPeak.YLabel = "Force at peak velocity (" + Units.ForceUnit(u) + ")";
+            _plotPeak.XLabel = "Peak " + v.Substring(0, 1).ToLower() + v.Substring(1); _plotPeak.YLabel = (_set.RemoveStaticForce ? "Damping force" : "Force as measured") + " at peak velocity (" + Units.ForceUnit(u) + ")";
             _plotPeak.Title = "Peak force vs peak velocity";
             _plotTimeF.XLabel = "Time (s)"; _plotTimeF.YLabel = "Force as measured (" + Units.ForceUnit(u) + ")"; _plotTimeF.Title = "Whole test";
             _plotTimeX.XLabel = "Time (s)"; _plotTimeX.YLabel = "Position (" + Units.LengthUnit(u) + ")";
@@ -1064,7 +1074,7 @@ namespace ShockDyno.App
             using (var d = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = "summary.csv" })
                 if (d.ShowDialog(this) == DialogResult.OK)
                 {
-                    try { TestRecord.ExportSummary(d.FileName, tests, _set.Units); Say("Exported " + Path.GetFileName(d.FileName)); }
+                    try { TestRecord.ExportSummary(d.FileName, tests, _set.Units, _set.RemoveStaticForce); Say("Exported " + Path.GetFileName(d.FileName)); }
                     catch (Exception ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
                 }
         }
@@ -1087,6 +1097,7 @@ namespace ShockDyno.App
             }
             SendLimits();
             _absSpeed.Checked = _set.AbsoluteSpeed;
+            _removeStatic.Checked = _set.RemoveStaticForce;
             RememberProject(_set.RunsFolder);
             RefreshHistory();
         }

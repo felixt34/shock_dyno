@@ -160,7 +160,7 @@ namespace ShockDyno.Core
         }
 
         /// <summary>Summary export: one row per test speed with peak velocity and force, in the chosen units.</summary>
-        public static void ExportSummary(string path, IEnumerable<KeyValuePair<string, List<StepResult>>> tests, UnitSystem u)
+        public static void ExportSummary(string path, IEnumerable<KeyValuePair<string, List<StepResult>>> tests, UnitSystem u, bool staticForceRemoved = true)
         {
             string fu = Units.ForceUnit(u), su = Units.SpeedUnit(u).Replace("/", "_per_");
             using (var w = new StreamWriter(path, false, new UTF8Encoding(false)))
@@ -168,7 +168,7 @@ namespace ShockDyno.Core
                 w.WriteLine(string.Join(",", new[] {
                     "test", "target_speed_" + su, "motor_frequency_Hz",
                     "compression_peak_velocity_" + su, "compression_force_at_peak_velocity_" + fu, "compression_max_force_" + fu,
-                    "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles" }));
+                    "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles", "static_force_removed" }));
                 foreach (var t in tests)
                     foreach (StepResult r in t.Value)
                         w.WriteLine(string.Join(",", new[] {
@@ -181,7 +181,7 @@ namespace ShockDyno.Core
                             Units.Length(r.RebPeakVel, u).ToString("0.###", Inv),
                             Units.Force(r.RebForceAtPeakVel, u).ToString("0.##", Inv),
                             Units.Force(r.RebMaxForce, u).ToString("0.##", Inv),
-                            r.CycleCount.ToString(Inv) }));
+                            r.CycleCount.ToString(Inv), staticForceRemoved ? "yes" : "no" }));
             }
         }
 
