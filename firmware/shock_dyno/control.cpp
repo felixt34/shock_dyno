@@ -30,7 +30,8 @@ void taskMain(void*) {
   uint16_t sentFreq = 0xFFFF;
   int fails = 0;
   uint32_t lastPoll = 0;
-  bool statusSupported = true, faultSupported = true;   // cleared if the drive rejects those registers
+  bool statusSupported = true, faultSupported = true;   // cleared if the drive rejects those registers or never answers
+  int statusMiss = 0, faultMiss = 0;                    // timeouts in a row while the frequency register answers
   auto note = [&](bool ok) {
     if (ok) { fails = 0; sh.vfdOk = true; return; }
     if (++fails >= VFD_COMM_FAIL_LIMIT) {
@@ -73,13 +74,15 @@ void taskMain(void*) {
       bool ok = vfd.readRegister(VFD_REG_FREQ_OUT, v);   // tested register: decides "drive answering"
       bool alive = ok || vfd.lastWasException();
       if (ok) sh.vfdFreq = v;
-      if (alive && statusSupported) {
-        if (vfd.readRegister(VFD_REG_STATUS, v)) sh.vfdStatus = v;
-        else if (vfd.lastWasException()) { statusSupported = false; sh.vfdStatus = 0; }
+      // Status and fault registers are untested on the TD350: drop one the drive rejects, or that times out
+      // 3 times in a row while the frequency register answers (each timeout keeps the RS-485 line busy 150 ms).
+      if (ok && statusSupported) {
+        if (vfd.readRegister(VFD_REG_STATUS, v)) { sh.vfdStatus = v; statusMiss = 0; }
+        else if (vfd.lastWasException() || ++statusMiss >= 3) { statusSupported = false; sh.vfdStatus = 0; }
       }
-      if (alive && faultSupported) {
-        if (vfd.readRegister(VFD_REG_FAULT, v)) sh.vfdFault = v;
-        else if (vfd.lastWasException()) { faultSupported = false; sh.vfdFault = 0; }
+      if (ok && faultSupported) {
+        if (vfd.readRegister(VFD_REG_FAULT, v)) { sh.vfdFault = v; faultMiss = 0; }
+        else if (vfd.lastWasException() || ++faultMiss >= 3) { faultSupported = false; sh.vfdFault = 0; }
       }
       note(alive);
     }
