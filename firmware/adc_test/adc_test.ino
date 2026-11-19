@@ -151,18 +151,31 @@ void setup() {
   }
   for (Adc& a : adcs) test(a);
   Serial.printf("\nRESULT: ADS #1 %s, ADS #2 %s\n", adcs[0].ok ? "OK" : "FAIL", adcs[1].ok ? "OK" : "FAIL");
-  Serial.println("Streaming raw readings of the boards that passed (counts and volts at the input), 4 per second:");
+  Serial.println("Noise check: both ADCs read at full speed (500 samples/s); every 0.25 s, the mean and the");
+  Serial.println("peak-to-peak spread of each. Force: 1 count ~ 0.0046 N. No USB data stream, no RS-485 traffic.");
+  Serial.println("   ADS #1 force: mean counts, p-p counts (~N)   |   ADS #2 position: mean counts, p-p counts");
 }
 
 void loop() {
-  for (Adc& a : adcs) {
-    if (!a.ok) { Serial.print("            -            |"); continue; }
-    if (waitDrdy(a, 100) < 0) { Serial.print("   DRDY timeout          |"); continue; }
-    int32_t v = readData(a);
-    double gain = (a.adcon & 0x07) == 6 ? 64.0 : 1.0;
-    double volts = v * (2.0 * 2.5 / gain) / 8388608.0;
-    Serial.printf(" %9ld  %+11.7f V |", (long)v, volts);
+  long long sum[2] = { 0, 0 };
+  int32_t lo[2] = { INT32_MAX, INT32_MAX }, hi[2] = { INT32_MIN, INT32_MIN };
+  int n[2] = { 0, 0 };
+  uint32_t t0 = millis();
+  while (millis() - t0 < 250) {                       // read each board as soon as it has a new sample
+    for (int k = 0; k < 2; k++) {
+      Adc& a = adcs[k];
+      if (!a.ok || digitalRead(a.drdy) == HIGH) continue;
+      int32_t v = readData(a);
+      sum[k] += v; n[k]++;
+      if (v < lo[k]) lo[k] = v;
+      if (v > hi[k]) hi[k] = v;
+    }
+  }
+  for (int k = 0; k < 2; k++) {
+    if (!adcs[k].ok || n[k] == 0) { Serial.print("        no data              |"); continue; }
+    long pp = (long)(hi[k] - lo[k]);
+    if (k == 0) Serial.printf(" %9ld  p-p %6ld (~%5.1f N) |", (long)(sum[k] / n[k]), pp, pp * 0.0046);
+    else        Serial.printf(" %9ld  p-p %6ld  (%3d samples)", (long)(sum[k] / n[k]), pp, n[k]);
   }
   Serial.println();
-  delay(250);
 }
