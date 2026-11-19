@@ -67,7 +67,7 @@ void taskMain(void*) {
       }
     }
 
-    if (millis() - lastPoll >= 200) {
+    if (millis() - lastPoll >= VFD_POLL_MS) {
       lastPoll = millis();
       uint16_t v;
       bool ok = vfd.readRegister(VFD_REG_FREQ_OUT, v);   // tested register: decides "drive answering"

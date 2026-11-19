@@ -42,6 +42,7 @@
 #define VFD_SERIAL_CONFIG     SERIAL_8E1
 #define VFD_ADDRESS           3
 #define VFD_TIMEOUT_MS        150
+#define VFD_POLL_MS           200       // drive status polling interval. The drive's communication timeout must be longer.
 
 // TD350 registers. 0x2000 run/stop, 0x800A and 0x3000 are tested on the drive (original DynamiX code).
 // 0x2100 status, 0x2102 fault and the fault-reset command 7 follow the INVT GD350 convention and are NOT
