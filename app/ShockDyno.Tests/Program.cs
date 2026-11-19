@@ -25,7 +25,9 @@ static class Program
         TestFullRun(25, 6);
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
-        TestFullRun(25, 6, 0.5);  // slow drive ramp: cycles during the ramp must not count
+        TestFullRun(25, 6, 0.5);
+        TestBushings(0.03);
+        TestBushings(0.08);  // slow drive ramp: cycles during the ramp must not count
         TestSampleClock();
         TestUnplug();
         TestCalibrationFile();
@@ -129,6 +131,26 @@ static class Program
         {
             for (double t = 0; t < maxSeconds && Success == null; t += 0.02) { if (each != null) each(t); Sim.Step(0.02); }
         }
+    }
+
+    /// <summary>
+    /// Real dampers: seal friction plus rubber bushings, so the force reverses a little after the crank.
+    /// The dead centres alone then over-estimate the static slope; the mid-stroke fit must not.
+    /// Also checks that the plotted loops (static force removed) are level, as on the real machine.
+    /// </summary>
+    static void TestBushings(double lagS)
+    {
+        Console.WriteLine("Static force with friction and rubber bushings (force lags " + lagS * 1000 + " ms)");
+        var rig = new Rig(25);
+        rig.Sim.FrictionN = 60; rig.Sim.BushingLagS = lagS;
+        rig.Runner.Start();
+        rig.Run(900);
+        CalibrationResult c = rig.Runner.Calibration;
+        if (c == null) { Check(false, "calibration produced (" + rig.Message + ")"); return; }
+        double err = Math.Abs(c.StaticSlopeNPerMm - 0.4), errDc = Math.Abs(c.DeadCentreSlopeNPerMm - 0.4);
+        Check(err < 0.1 + 1.5 * lagS && err < 0.35 * errDc, string.Format("static slope {0:0.00} N/mm (model 0.40; dead centres alone {1:0.00})", c.StaticSlopeNPerMm, c.DeadCentreSlopeNPerMm));
+        Check(Near(c.PreloadN, 150, 0.06), "preload " + c.PreloadN.ToString("0.0") + " N (model 150)");
+        Check(Near(c.GasForceN, 160, 0.03), "gas force " + c.GasForceN.ToString("0.0") + " N (model 160)");
     }
 
     static void TestFullRun(double amplitude, int expectedSteps, double rampHzPerS = 10)

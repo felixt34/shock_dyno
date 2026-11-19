@@ -19,6 +19,7 @@ namespace ShockDyno.Core
         public double PreloadN;          // static force at bottom dead centre
         public double GasForceN;         // static force at mid-stroke
         public double StaticSlopeNPerMm; // static force change per mm of compression (gas spring / spring rate)
+        public double DeadCentreSlopeNPerMm; // the same from the dead-centre forces only (for comparison; biased by bushings)
         public double CrankHz;           // measured crank frequency during the calibration cycle
 
         /// <summary>Static (speed-independent) force at xr mm above bottom dead centre.</summary>
@@ -129,15 +130,41 @@ namespace ShockDyno.Core
             var r = new CalibrationResult { AmplitudeMm = stroke / 2, CrankHz = 1 / c.Period };
             r.BdcMm = FilteredMin(s, i0, i1, set);
 
-            int w = Math.Max(3, (int)Math.Round(0.005 * n));         // +/- 0.5 % of the cycle: speed below 3 % of peak
+            // Level: force at the two dead centres (speed below 3 % of peak), averaged on both sides of each.
+            // Seal friction flips sign there, and rubber bushings make the force reverse a little after the
+            // crank does, so each dead-centre value is biased (TDC high, BDC low) - but equally and oppositely,
+            // so their mean, the static force at mid-stroke, is right.
+            int w = Math.Max(3, (int)Math.Round(0.005 * n));
             double fBdc = 0, fTdc = 0; int nb = 0, nt = 0;
             for (int i = 0; i <= w && i < n; i++) { fBdc += c.F[i] + c.F[n - 1 - i]; nb += 2; }
             for (int i = Math.Max(0, top - w); i <= Math.Min(n - 1, top + w); i++) { fTdc += c.F[i]; nt++; }
             fBdc /= nb; fTdc /= nt;
-            r.PreloadN = fBdc;
-            r.StaticSlopeNPerMm = stroke > 0 ? (fTdc - fBdc) / stroke : 0;
-            r.GasForceN = r.StaticForce(r.AmplitudeMm);
+            r.GasForceN = (fBdc + fTdc) / 2;
+
+            // Slope: from the middle of the stroke, away from the turnarounds. A straight line through the
+            // compression branch and one through the rebound branch over 20-80 % of the stroke; the static
+            // force is midway between them, so its slope is the mean of the two slopes. The speed profile is
+            // symmetric about mid-stroke, so different compression / rebound damping does not tilt it.
+            double bc, br;
+            r.DeadCentreSlopeNPerMm = stroke > 0 ? (fTdc - fBdc) / stroke : 0;
+            if (FitBranch(c, stroke, true, out bc) && FitBranch(c, stroke, false, out br)) r.StaticSlopeNPerMm = (bc + br) / 2;
+            else r.StaticSlopeNPerMm = r.DeadCentreSlopeNPerMm;   // too few points: fall back on the dead centres
+            r.PreloadN = r.GasForceN - r.StaticSlopeNPerMm * r.AmplitudeMm;
             return r;
+        }
+
+        /// <summary>Least-squares slope (N/mm) of force against position on one branch, over 20-80 % of the stroke.</summary>
+        static bool FitBranch(ProcessedCycle c, double stroke, bool compression, out double slope)
+        {
+            double sx = 0, sy = 0, sxx = 0, sxy = 0; int k = 0;
+            for (int i = 0; i < c.X.Length; i++)
+            {
+                if ((c.V[i] > 0) != compression || c.X[i] < 0.2 * stroke || c.X[i] > 0.8 * stroke) continue;
+                sx += c.X[i]; sy += c.F[i]; sxx += c.X[i] * c.X[i]; sxy += c.X[i] * c.F[i]; k++;
+            }
+            double d = k * sxx - sx * sx;
+            slope = k >= 20 && d > 1e-9 ? (k * sxy - sx * sy) / d : 0;
+            return k >= 20 && d > 1e-9;
         }
 
         static double FilteredMin(IList<Sample> s, int i0, int i1, Settings set)

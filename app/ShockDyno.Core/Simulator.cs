@@ -25,7 +25,10 @@ namespace ShockDyno.Core
         public double RebC1 = 8, RebKnee = 40, RebC2 = 2.5;
         public double ForceNoiseN = 1.5, PosNoiseMm = 0.003;
         public double Slip = 0.025, RampHzPerS = 10;
-        public double StopLagS = 0.25;                           // stop command -> drive starts to brake (USB, Modbus, drive)
+        public double StopLagS = 0.25;
+        /// <summary>Rubber bushings / play: the damping and friction force follows the motion with this time constant (s).</summary>
+        public double BushingLagS = 0;
+        double _dyn;                           // stop command -> drive starts to brake (USB, Modbus, drive)
         /// <summary>Crank position above bottom dead centre (mm), without noise.</summary>
         public void SetCrankAngle(double rad) { lock (_lock) _theta = rad; }
         public double CrankAboveBdcMm { get { lock (_lock) return AmplitudeMm * (1 - Math.Cos(_theta)); } }
@@ -169,7 +172,9 @@ namespace ShockDyno.Core
                     _theta += w * h;
                     double xr = AmplitudeMm * (1 - Math.Cos(_theta));
                     double v = AmplitudeMm * w * Math.Sin(_theta);
-                    double force = GasForceN + GasRateNPerMm * xr + DamperForce(v) + ForceNoiseN * Gauss();
+                    double dyn = DamperForce(v);
+                    _dyn = BushingLagS > 0 ? _dyn + (dyn - _dyn) * Math.Min(1, h / BushingLagS) : dyn;
+                    double force = GasForceN + GasRateNPerMm * xr + _dyn + ForceNoiseN * Gauss();
                     double pos = CenterMm - AmplitudeMm + xr + PosNoiseMm * Gauss();
                     _us += (uint)(1e6 * h);
                     var s = new RawSample

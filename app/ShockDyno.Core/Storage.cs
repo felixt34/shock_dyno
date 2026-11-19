@@ -107,6 +107,7 @@ namespace ShockDyno.Core
             var results = new List<StepResult>();
             var cycles = new Dictionary<int, List<ProcessedCycle>>();
             int n = Samples.Count, i = 0;
+            RecomputeCalibration(set);
             while (i < n)
             {
                 if (CycleOf[i] == 0 || StepOf[i] < 0) { i++; continue; }
@@ -122,6 +123,22 @@ namespace ShockDyno.Core
                 if (cycles.ContainsKey(k))
                     results.Add(Analyzer.Summarize(k, Steps[k].SpeedMmS, k < StepMotorHz.Count ? StepMotorHz[k] : 0, cycles[k]));
             return results;
+        }
+
+        /// <summary>
+        /// Recomputes amplitude, preload, gas force and static slope from the saved calibration cycle
+        /// (step -1, cycle 1), so older files benefit from improvements in the calculation.
+        /// Keeps the stored values if the file has no calibration cycle.
+        /// </summary>
+        public void RecomputeCalibration(Settings set)
+        {
+            int i0 = -1, i1 = -1;
+            for (int i = 0; i < Samples.Count; i++)
+                if (StepOf[i] < 0 && CycleOf[i] == 1) { if (i0 < 0) i0 = i; i1 = i; }
+                else if (i0 >= 0) break;
+            if (i0 < 0 || i1 - i0 < 50) return;
+            try { Calibration = Analyzer.Calibrate(Samples, i0, i1, set); }
+            catch (Exception) { /* keep the stored values */ }
         }
 
         /// <summary>True if the file starts like a saved test (so summaries and other CSV files are not listed).</summary>

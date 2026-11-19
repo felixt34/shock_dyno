@@ -190,8 +190,8 @@ namespace ShockDyno.Core
                 Calibration = Analyzer.Calibrate(_samples, prev, j, _set);
                 _speedFactor = Clamp(Calibration.CrankHz / Kinematics.CrankHz(_motorHz, _set), 0.8, 1.2);
                 for (int i = prev; i <= j; i++) _cycleOf[i] = 1;
-                Say(string.Format("Amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N",
-                    Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN));
+                Say(string.Format("Amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N, static slope {3:0.00} N/mm (dead centres alone: {4:0.00})",
+                    Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN, Calibration.StaticSlopeNPerMm, Calibration.DeadCentreSlopeNPerMm));
                 var h = Calibrated; if (h != null) h(Calibration);
                 NextStep();
                 return;
