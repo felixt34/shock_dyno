@@ -165,7 +165,10 @@ void setup() {
   Serial.println("   ADS #1 force: mean counts, p-p counts (~N)   |   ADS #2 position: mean counts, p-p counts");
 }
 
+uint32_t rateStart = 0, rateCount[2] = { 0, 0 }, rateLines = 0;
+
 void loop() {
+  if (rateStart == 0) rateStart = millis();
   long long sum[2] = { 0, 0 };
   int32_t lo[2] = { INT32_MAX, INT32_MAX }, hi[2] = { INT32_MIN, INT32_MIN };
   int n[2] = { 0, 0 };
@@ -176,7 +179,7 @@ void loop() {
       bool read = k == 0 ? (READ_FORCE && !STOP_FORCE) : (READ_POSITION && !STOP_POSITION);
       if (!a.ok || !read || digitalRead(a.drdy) == HIGH) continue;
       int32_t v = readData(a);
-      sum[k] += v; n[k]++;
+      sum[k] += v; n[k]++; rateCount[k]++;
       if (v < lo[k]) lo[k] = v;
       if (v > hi[k]) hi[k] = v;
     }
@@ -193,4 +196,13 @@ void loop() {
     else        Serial.printf(" %9ld  p-p %6ld  (%3d samples)", (long)(sum[k] / n[k]), pp, n[k]);
   }
   Serial.println();
+  // every 10 s: the real sample rate of each board read, and their difference
+  if (++rateLines >= 40) {
+    double secs = (millis() - rateStart) / 1000.0;
+    double r0 = rateCount[0] / secs, r1 = rateCount[1] / secs;
+    Serial.printf("== sample rates over %.1f s: ADS #1 %.2f /s, ADS #2 %.2f /s", secs, r0, r1);
+    if (rateCount[0] > 0 && rateCount[1] > 0) Serial.printf(", difference %.2f /s (beat every %.2f s)", fabs(r0 - r1), fabs(r0 - r1) > 0.01 ? 1 / fabs(r0 - r1) : 0.0);
+    Serial.println(" ==");
+    rateStart = millis(); rateCount[0] = rateCount[1] = 0; rateLines = 0;
+  }
 }
