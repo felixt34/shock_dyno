@@ -18,7 +18,7 @@ namespace ShockDyno.App
 
     /// <summary>
     /// A small XY plot (lines and markers, auto-scaled axes, legend). No external dependency.
-    /// Mouse: wheel zooms around the cursor (Shift = time/X only, Ctrl = Y only), left-drag zooms to a box,
+    /// Mouse: wheel zooms both axes around the cursor (Shift = X only, Shift + Ctrl = Y only), left-drag zooms to a box,
     /// right-drag pans, double-click goes back to the full view; hovering shows the nearest point's values.
     /// </summary>
     public class PlotControl : Control
@@ -61,7 +61,10 @@ namespace ShockDyno.App
             if (!_area.Contains(e.Location)) return;
             double f = e.Delta > 0 ? 0.8 : 1.25;
             double cx = ToX(e.X), cy = ToY(e.Y);
-            bool onlyX = (ModifierKeys & Keys.Shift) != 0, onlyY = (ModifierKeys & Keys.Control) != 0;
+            // Plain wheel zooms both axes. Ctrl must too: a touchpad pinch arrives as Ctrl + wheel.
+            // Shift: horizontal axis only; Shift + Ctrl: vertical axis only.
+            bool shift = (ModifierKeys & Keys.Shift) != 0, ctrl = (ModifierKeys & Keys.Control) != 0;
+            bool onlyX = shift && !ctrl, onlyY = shift && ctrl;
             double nx0 = _x0, nx1 = _x1, ny0 = _y0, ny1 = _y1;
             if (!onlyY) { nx0 = cx - (cx - _x0) * f; nx1 = cx + (_x1 - cx) * f; }
             if (!onlyX) { ny0 = cy - (cy - _y0) * f; ny1 = cy + (_y1 - cy) * f; }
