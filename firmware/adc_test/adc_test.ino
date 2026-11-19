@@ -10,6 +10,10 @@
 // the load cell signals on these boards.
 const uint8_t FORCE_STATUS = 0x02;
 
+// Approximate scales for the printout (from the app's sensor calibration; adjust if yours differ)
+const double FORCE_N_PER_COUNT = 0.0046;       // load cell, gain 64
+const double LVIT_MM_PER_COUNT = 0.000052827;  // LVIT through the 33k/10k divider, gain 1 (about 19,000 counts per mm)
+
 // Crosstalk tests between the two boards (change, upload, compare the p-p columns):
 //   READ_...  false: the board keeps converting but is not read (no SPI traffic to it)
 //   STOP_...  true : the board is put in power-down after its start-up check (SYNC/PDWN held low:
@@ -161,8 +165,8 @@ void setup() {
   if (STOP_POSITION && adcs[1].ok) { digitalWrite(adcs[1].sync, LOW); Serial.println("ADS #2 (position) put in power-down"); }
   Serial.printf("\nRESULT: ADS #1 %s, ADS #2 %s\n", adcs[0].ok ? "OK" : "FAIL", adcs[1].ok ? "OK" : "FAIL");
   Serial.println("Noise check: both ADCs read at full speed (500 samples/s); every 0.25 s, the mean and the");
-  Serial.println("peak-to-peak spread of each. Force: 1 count ~ 0.0046 N. No USB data stream, no RS-485 traffic.");
-  Serial.println("   ADS #1 force: mean counts, p-p counts (~N)   |   ADS #2 position: mean counts, p-p counts");
+  Serial.println("peak-to-peak spread of each, in counts and (approximately) in N or mm. No USB data stream, no RS-485 traffic.");
+  Serial.println("   ADS #1 force: mean counts, p-p counts (~N)   |   ADS #2 LVIT: mean counts (~mm from 0 V), p-p counts (~mm)");
 }
 
 uint32_t rateStart = 0, rateCount[2] = { 0, 0 }, rateLines = 0;
@@ -192,8 +196,9 @@ void loop() {
       continue;
     }
     long pp = (long)(hi[k] - lo[k]);
-    if (k == 0) Serial.printf(" %9ld  p-p %6ld (~%5.1f N) |", (long)(sum[k] / n[k]), pp, pp * 0.0046);
-    else        Serial.printf(" %9ld  p-p %6ld  (%3d samples)", (long)(sum[k] / n[k]), pp, n[k]);
+    long mean = (long)(sum[k] / n[k]);
+    if (k == 0) Serial.printf(" %9ld  p-p %6ld (~%5.1f N) |", mean, pp, pp * FORCE_N_PER_COUNT);
+    else        Serial.printf(" %9ld (~%7.2f mm)  p-p %6ld (~%6.3f mm)  (%3d samples)", mean, mean * LVIT_MM_PER_COUNT, pp, pp * LVIT_MM_PER_COUNT, n[k]);
   }
   Serial.println();
   // every 10 s: the real sample rate of each board read, and their difference
