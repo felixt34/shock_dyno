@@ -179,6 +179,35 @@ namespace ShockDyno.Core
             return min;
         }
 
+        /// <summary>
+        /// Average of several cycles of the same speed: each cycle is resampled at the same fractions of its
+        /// period (0 = bottom dead centre at the start, 1 = at the end), then position, velocity and force
+        /// are averaged point by point.
+        /// </summary>
+        public static ProcessedCycle AverageCycles(IList<ProcessedCycle> cycles, int points = 500)
+        {
+            if (cycles.Count == 1) return cycles[0];
+            var a = new ProcessedCycle { Step = cycles[0].Step, T = new double[points], X = new double[points], V = new double[points], F = new double[points] };
+            double period = 0;
+            foreach (ProcessedCycle c in cycles)
+            {
+                double p = c.Period;
+                period += p / cycles.Count;
+                int j = 0;
+                for (int i = 0; i < points; i++)
+                {
+                    double t = p * i / (points - 1);
+                    while (j < c.T.Length - 2 && c.T[j + 1] < t) j++;
+                    double span = c.T[j + 1] - c.T[j], u = span > 0 ? Math.Max(0, Math.Min(1, (t - c.T[j]) / span)) : 0;
+                    a.X[i] += (c.X[j] + u * (c.X[j + 1] - c.X[j])) / cycles.Count;
+                    a.V[i] += (c.V[j] + u * (c.V[j + 1] - c.V[j])) / cycles.Count;
+                    a.F[i] += (c.F[j] + u * (c.F[j + 1] - c.F[j])) / cycles.Count;
+                }
+            }
+            for (int i = 0; i < points; i++) a.T[i] = period * i / (points - 1);
+            return a;
+        }
+
         /// <summary>Peak values of a step, averaged over its measured cycles.</summary>
         public static StepResult Summarize(int step, double targetSpeed, double motorHz, List<ProcessedCycle> cycles)
         {

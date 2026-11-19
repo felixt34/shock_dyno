@@ -21,7 +21,20 @@ namespace ShockDyno.App
             public List<StepResult> Results;
             public Color? Custom;          // colour chosen by the user (saved in the project folder)
             public Color Shown;            // colour used in the graphs this time
+            public readonly List<SpeedItem> Speeds = new List<SpeedItem>();
             public override string ToString() { return Display; }
+        }
+
+        /// <summary>One measured speed of a test, shown under it in the run list.</summary>
+        class SpeedItem
+        {
+            public HistoryItem Test;
+            public int Step;
+            public double SpeedMmS, MotorHz;
+            public Color? Custom;          // null = same colour as its test
+            public bool Visible = true;
+            public Color Shown { get { return Custom ?? Test.Shown; } }
+            public string Key { get { return Path.GetFileName(Test.Path) + "#" + Step; } }
         }
 
         readonly string _selfTest;
@@ -64,7 +77,8 @@ namespace ShockDyno.App
         readonly PlotControl _plotFx = new PlotControl { Dock = DockStyle.Fill }, _plotFv = new PlotControl { Dock = DockStyle.Fill },
                              _plotPeak = new PlotControl { Dock = DockStyle.Fill }, _plotTimeF = new PlotControl { Dock = DockStyle.Fill },
                              _plotTimeX = new PlotControl { Dock = DockStyle.Fill }, _plotTimeV = new PlotControl { Dock = DockStyle.Fill };
-        readonly ListView _history = new ListView { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = true, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.None, MultiSelect = true, HideSelection = false };
+        readonly TreeView _history = new TreeView { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, ShowNodeToolTips = true, ItemHeight = 20 };
+        readonly HashSet<string> _expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // tests whose speed list is open
         readonly ImageList _swatches = new ImageList { ImageSize = new Size(14, 14), ColorDepth = ColorDepth.Depth32Bit };
         readonly Dictionary<int, int> _swatchIndex = new Dictionary<int, int>();
         readonly ComboBox _project = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 284 };
@@ -166,28 +180,27 @@ namespace ShockDyno.App
             _project.Location = new Point(0, 22);
             browse.Location = new Point(0, 50); newProject.Location = new Point(145, 50);
             head.Controls.Add(_project); head.Controls.Add(browse); head.Controls.Add(newProject);
-            head.Controls.Add(new Label { Text = "Runs - tick to show in the graphs,\nclick the colour square to change it", Location = new Point(0, 86), Size = new Size(290, 36), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
+            head.Controls.Add(new Label { Text = "Runs - tick to show; + opens the speeds;\nclick a colour square to change it", Location = new Point(0, 86), Size = new Size(290, 36), Font = new Font("Segoe UI", 9f, FontStyle.Bold) });
             right.Controls.Add(head, 0, 0);
             right.Controls.Add(_history, 0, 1);
-            _history.SmallImageList = _swatches;
-            _history.Columns.Add("Run", 260);
-            _history.Resize += (s, e) => { if (_history.Columns.Count > 0) _history.Columns[0].Width = Math.Max(100, _history.ClientSize.Width - 4); };
+            _history.ImageList = _swatches;
             var menu2 = new ContextMenuStrip();
-            menu2.Items.Add("Change colour...", null, (s, e) => ChangeRunColour());
-            menu2.Items.Add("Automatic colour", null, (s, e) => SetRunColour(null));
+            menu2.Items.Add("Change colour...", null, (s, e) => { if (_history.SelectedNode != null) PickColour(_history.SelectedNode); });
+            menu2.Items.Add("Automatic colour", null, (s, e) => { if (_history.SelectedNode != null) SetColour(_history.SelectedNode, null); });
             menu2.Items.Add(new ToolStripSeparator());
-            menu2.Items.Add("Tick selected", null, (s, e) => TickSelected(true));
-            menu2.Items.Add("Untick selected", null, (s, e) => TickSelected(false));
-            menu2.Items.Add("Untick all", null, (s, e) => { _loadingHistory = true; foreach (ListViewItem it in _history.Items) it.Checked = false; _loadingHistory = false; RefreshAnalysis(); });
+            menu2.Items.Add("Show all speeds of this test", null, (s, e) => ShowAllSpeeds(true));
+            menu2.Items.Add("Hide all speeds of this test", null, (s, e) => ShowAllSpeeds(false));
+            menu2.Items.Add(new ToolStripSeparator());
+            menu2.Items.Add("Open all speed lists", null, (s, e) => _history.ExpandAll());
+            menu2.Items.Add("Close all speed lists", null, (s, e) => _history.CollapseAll());
+            menu2.Items.Add("Untick all tests", null, (s, e) => { _loadingHistory = true; foreach (TreeNode n in _history.Nodes) n.Checked = false; _loadingHistory = false; RefreshAnalysis(); });
             menu2.Items.Add(new ToolStripSeparator());
             menu2.Items.Add("Open project folder", null, (s, e) => { Directory.CreateDirectory(_set.RunsFolder); System.Diagnostics.Process.Start(_set.RunsFolder); });
             _history.ContextMenuStrip = menu2;
-            _history.MouseClick += (s, e) =>
+            _history.NodeMouseClick += (s, e) =>
             {
-                if (e.Button != MouseButtons.Left) return;
-                ListViewItem it = _history.GetItemAt(e.X, e.Y);
-                if (it == null || !it.GetBounds(ItemBoundsPortion.Icon).Contains(e.Location)) return;
-                PickRunColour(new List<HistoryItem> { (HistoryItem)it.Tag });   // click on the colour square
+                if (e.Button == MouseButtons.Right) { _history.SelectedNode = e.Node; return; }
+                if (e.Button == MouseButtons.Left && SwatchBounds(e.Node).Contains(e.Location)) PickColour(e.Node);   // the colour square
             };
             var export = new Button { Text = "Export summary CSV...", Dock = DockStyle.Fill };
             export.Click += (s, e) => ExportSummary();
@@ -230,7 +243,9 @@ namespace ShockDyno.App
             _tare.Click += (s, e) => Tare();
             _clear.Click += (s, e) => { if (_link != null) _link.ClearFault(); };
             _findBdc.Click += (s, e) => FindBdc();
-            _history.ItemChecked += (s, e) => { if (!_loadingHistory) QueueRefreshAnalysis(); };
+            _history.AfterCheck += (s, e) => OnNodeChecked(e.Node);
+            _history.AfterExpand += (s, e) => { var h = e.Node.Tag as HistoryItem; if (h != null) _expanded.Add(h.Path); };
+            _history.AfterCollapse += (s, e) => { var h = e.Node.Tag as HistoryItem; if (h != null) _expanded.Remove(h.Path); };
             _project.SelectedIndexChanged += (s, e) => { if (!_loadingProjects && _project.SelectedItem is ProjectEntry) SetProject(((ProjectEntry)_project.SelectedItem).Path); };
             FormClosing += (s, e) => Shutdown();
         }
@@ -641,6 +656,14 @@ namespace ShockDyno.App
                 t.Tick += (s, e) =>
                 {
                     t.Stop();
+                    // exercise the speed list: open it, hide the 2nd speed, give the 4th its own colour
+                    if (_history.Nodes.Count > 0 && _history.Nodes[0].Nodes.Count > 3)
+                    {
+                        _history.Nodes[0].Expand();
+                        _history.Nodes[0].Nodes[1].Checked = false;
+                        SetColour(_history.Nodes[0].Nodes[3], Color.Crimson);
+                        Application.DoEvents();
+                    }
                     foreach (int tab in new[] { 3, 4, 1, 2, 0 })
                     {
                         _tabs.SelectedIndex = tab; if (tab == 4) DrawLiveSignals(); Refresh(); Application.DoEvents();
@@ -737,7 +760,7 @@ namespace ShockDyno.App
             string v = _set.AbsoluteSpeed ? "Speed (" + Units.SpeedUnit(u) + "),  compression and rebound both +"
                                           : "Velocity (" + Units.SpeedUnit(u) + "),  + compression";
             _plotFx.XLabel = x; _plotFx.YLabel = f;
-            _plotFv.XLabel = v; _plotFv.YLabel = f; _plotFv.Title = "Force vs velocity (last cycle of each speed)";
+            _plotFv.XLabel = v; _plotFv.YLabel = f; _plotFv.Title = "Force vs velocity (average of the measured cycles)";
             _plotPeak.XLabel = "Peak " + v.Substring(0, 1).ToLower() + v.Substring(1); _plotPeak.YLabel = (_set.RemoveStaticForce ? "Damping force" : "Force as measured") + " at peak velocity (" + Units.ForceUnit(u) + ")";
             _plotPeak.Title = "Peak force vs peak velocity";
             _plotTimeF.XLabel = "Time (s)"; _plotTimeF.YLabel = "Force as measured (" + Units.ForceUnit(u) + ")"; _plotTimeF.Title = "Whole test";
@@ -751,10 +774,10 @@ namespace ShockDyno.App
         {
             var wasChecked = new HashSet<string>(CheckedRuns().Select(h => h.Path));
             if (checkPath != null) { wasChecked.Clear(); wasChecked.Add(checkPath); }
-            Dictionary<string, Color> colours = LoadRunColours();
+            Dictionary<string, string> display = LoadRunDisplay();
             _loadingHistory = true;
             _history.BeginUpdate();
-            _history.Items.Clear();
+            _history.Nodes.Clear();
             try
             {
                 if (Directory.Exists(_set.RunsFolder))
@@ -763,8 +786,25 @@ namespace ShockDyno.App
                         if (!TestRecord.IsTestFile(path)) continue;          // summaries, calibration history, other CSV files
                         string name = Path.GetFileNameWithoutExtension(path);
                         var h = new HistoryItem { Path = path, Display = name };
-                        Color c; if (colours.TryGetValue(Path.GetFileName(path), out c)) h.Custom = c;
-                        _history.Items.Add(new ListViewItem(name) { Tag = h, Checked = wasChecked.Contains(path), ToolTipText = path });
+                        string v; Color c; bool hidden;
+                        if (display.TryGetValue(Path.GetFileName(path), out v) && ParseDisplay(v, out c, out hidden)) h.Custom = c;
+                        var node = new TreeNode(name) { Tag = h, Checked = wasChecked.Contains(path), ToolTipText = path };
+                        try
+                        {
+                            TestRecord head = TestRecord.LoadHeader(path);
+                            for (int k = 0; k < head.Steps.Count; k++)
+                            {
+                                double hz = k < head.StepMotorHz.Count ? head.StepMotorHz[k] : 0;
+                                if (head.Steps[k].Type != StepType.Cycles || hz <= 0) continue;   // warm-up, or skipped
+                                var sp = new SpeedItem { Test = h, Step = k, SpeedMmS = head.Steps[k].SpeedMmS, MotorHz = hz };
+                                if (display.TryGetValue(sp.Key, out v)) { if (ParseDisplay(v, out c, out hidden)) sp.Custom = c; sp.Visible = !hidden; }
+                                h.Speeds.Add(sp);
+                                node.Nodes.Add(new TreeNode(SpeedName(sp.SpeedMmS, sp.MotorHz)) { Tag = sp, Checked = sp.Visible });
+                            }
+                        }
+                        catch (Exception) { /* listed without its speeds */ }
+                        _history.Nodes.Add(node);
+                        if (_expanded.Contains(path)) node.Expand();
                     }
             }
             catch (Exception ex) { Say("Could not read the project folder: " + ex.Message); }
@@ -790,7 +830,7 @@ namespace ShockDyno.App
                 catch (Exception ex) { Say("Could not read " + Path.GetFileName(h.Path) + ": " + ex.Message); }
             }
             _plotFx.Series.Clear(); _plotFv.Series.Clear(); _plotPeak.Series.Clear(); _plotTimeF.Series.Clear(); _plotTimeX.Series.Clear(); _plotTimeV.Series.Clear();
-            _plotFx.Title = "Force vs position (last cycle of each speed)";
+            _plotFx.Title = "Force vs position (every measured cycle)";
             bool single = tests.Count == 1;
             AssignColours(tests);
             for (int t = 0; t < tests.Count; t++)
@@ -805,7 +845,7 @@ namespace ShockDyno.App
                     // Two branches from the origin: compression above zero force, rebound below, both at positive speed.
                     var cx = new List<double> { 0 }; var cy = new List<double> { 0 };
                     var rx = new List<double> { 0 }; var ry = new List<double> { 0 };
-                    foreach (StepResult r in h.Results.OrderBy(r => r.TargetSpeed))
+                    foreach (StepResult r in h.Results.Where(q => SpeedVisible(h, q.Step)).OrderBy(r => r.TargetSpeed))
                     {
                         cx.Add(sx(r.CompPeakVel)); cy.Add(Units.Force(r.CompForceAtPeakVel, u));
                         rx.Add(sx(r.RebPeakVel)); ry.Add(Units.Force(r.RebForceAtPeakVel, u));
@@ -816,19 +856,25 @@ namespace ShockDyno.App
                 else
                 {
                     var px = new List<double>(); var py = new List<double>();
-                    foreach (StepResult r in h.Results.OrderByDescending(r => r.TargetSpeed)) { px.Add(sx(r.RebPeakVel)); py.Add(Units.Force(r.RebForceAtPeakVel, u)); }
+                    foreach (StepResult r in h.Results.Where(q => SpeedVisible(h, q.Step)).OrderByDescending(r => r.TargetSpeed)) { px.Add(sx(r.RebPeakVel)); py.Add(Units.Force(r.RebForceAtPeakVel, u)); }
                     px.Add(0); py.Add(0);
-                    foreach (StepResult r in h.Results.OrderBy(r => r.TargetSpeed)) { px.Add(sx(r.CompPeakVel)); py.Add(Units.Force(r.CompForceAtPeakVel, u)); }
+                    foreach (StepResult r in h.Results.Where(q => SpeedVisible(h, q.Step)).OrderBy(r => r.TargetSpeed)) { px.Add(sx(r.CompPeakVel)); py.Add(Units.Force(r.CompForceAtPeakVel, u)); }
                     _plotPeak.Series.Add(new PlotSeries { X = px.ToArray(), Y = py.ToArray(), Color = testColor, Markers = true, Name = h.Display, Width = 2f });
                 }
                 foreach (StepResult r in h.Results)
                 {
-                    ProcessedCycle c = r.Cycles[r.Cycles.Count - 1];
-                    Color col = single ? PlotControl.Palette[r.Step % PlotControl.Palette.Length] : testColor;
-                    string name = single ? SpeedName(r.TargetSpeed, r.MotorHz) : (first ? h.Display : null);
-                    first = false;
-                    _plotFx.Series.Add(new PlotSeries { X = Conv(c.X, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
-                    _plotFv.Series.Add(new PlotSeries { X = Conv(c.V, sx), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = name });
+                    SpeedItem sp = h.Speeds.FirstOrDefault(q => q.Step == r.Step);
+                    if (sp != null && !sp.Visible) continue;
+                    Color col = sp != null ? sp.Shown : testColor;
+                    string name = single ? SpeedName(r.TargetSpeed, r.MotorHz) : h.Display + "  " + SpeedName(r.TargetSpeed, 0);
+                    bool firstCycle = true;
+                    foreach (ProcessedCycle c in r.Cycles)          // every measured cycle; the name only once per speed
+                    {
+                        _plotFx.Series.Add(new PlotSeries { X = Conv(c.X, v => Units.Length(v, u)), Y = Conv(c.F, v => Units.Force(v, u)), Color = col, Name = firstCycle ? name : null, Width = 1.2f });
+                        firstCycle = false;
+                    }
+                    ProcessedCycle avg = Analyzer.AverageCycles(r.Cycles);
+                    _plotFv.Series.Add(new PlotSeries { X = Conv(avg.V, sx), Y = Conv(avg.F, v => Units.Force(v, u)), Color = col, Name = name });
                 }
             }
             if (tests.Count > 0)
@@ -854,7 +900,13 @@ namespace ShockDyno.App
         // ------------------------------------------------------------------ runs list: ticks and colours
         IEnumerable<HistoryItem> CheckedRuns()
         {
-            foreach (ListViewItem it in _history.Items) if (it.Checked) yield return (HistoryItem)it.Tag;
+            foreach (TreeNode n in _history.Nodes) if (n.Checked) yield return (HistoryItem)n.Tag;
+        }
+
+        static bool SpeedVisible(HistoryItem h, int step)
+        {
+            SpeedItem sp = h.Speeds.FirstOrDefault(q => q.Step == step);
+            return sp == null || sp.Visible;
         }
 
         bool _refreshQueued;
@@ -865,7 +917,33 @@ namespace ShockDyno.App
             BeginInvoke((Action)(() => { _refreshQueued = false; RefreshAnalysis(); }));
         }
 
-        /// <summary>Chosen colours first; the others get palette colours not already taken, in list order.</summary>
+        void OnNodeChecked(TreeNode n)
+        {
+            if (_loadingHistory) return;
+            var sp = n.Tag as SpeedItem;
+            if (sp != null)
+            {
+                sp.Visible = n.Checked;
+                if (n.Checked && !n.Parent.Checked) { _loadingHistory = true; n.Parent.Checked = true; _loadingHistory = false; }   // showing a speed shows its test
+                SaveRunDisplay();
+            }
+            QueueRefreshAnalysis();
+        }
+
+        void ShowAllSpeeds(bool on)
+        {
+            TreeNode n = _history.SelectedNode;
+            if (n == null) return;
+            if (n.Parent != null) n = n.Parent;
+            _loadingHistory = true;
+            foreach (TreeNode c in n.Nodes) { c.Checked = on; ((SpeedItem)c.Tag).Visible = on; }
+            if (on) n.Checked = true;
+            _loadingHistory = false;
+            SaveRunDisplay();
+            RefreshAnalysis();
+        }
+
+        /// <summary>Chosen colours first; the other shown tests get palette colours not already taken, in list order.</summary>
         void AssignColours(List<HistoryItem> shown)
         {
             var used = new HashSet<int>(shown.Where(h => h.Custom.HasValue).Select(h => h.Custom.Value.ToArgb()));
@@ -879,12 +957,26 @@ namespace ShockDyno.App
                 h.Shown = c; used.Add(c.ToArgb()); k++;
             }
             var shownSet = new HashSet<HistoryItem>(shown);
-            foreach (ListViewItem it in _history.Items)
+            foreach (TreeNode n in _history.Nodes)
             {
-                var h = (HistoryItem)it.Tag;
-                Color? c = shownSet.Contains(h) ? h.Shown : h.Custom;
-                it.ImageIndex = Swatch(c);
+                var h = (HistoryItem)n.Tag;
+                bool on = shownSet.Contains(h);
+                SetSwatch(n, on ? h.Shown : h.Custom);
+                foreach (TreeNode c in n.Nodes)
+                {
+                    var sp = (SpeedItem)c.Tag;
+                    SetSwatch(c, on ? sp.Shown : sp.Custom ?? h.Custom);
+                }
             }
+        }
+
+        void SetSwatch(TreeNode n, Color? c) { n.ImageIndex = n.SelectedImageIndex = Swatch(c); }
+
+        /// <summary>Where a node's colour square is drawn: just left of its text.</summary>
+        Rectangle SwatchBounds(TreeNode n)
+        {
+            int w = _swatches.ImageSize.Width + 4;
+            return new Rectangle(n.Bounds.Left - w - 1, n.Bounds.Top, w + 1, n.Bounds.Height);
         }
 
         int Swatch(Color? c)
@@ -905,51 +997,31 @@ namespace ShockDyno.App
             return idx;
         }
 
-        List<HistoryItem> SelectedRuns()
+        void PickColour(TreeNode n)
         {
-            var r = new List<HistoryItem>();
-            foreach (ListViewItem it in _history.SelectedItems) r.Add((HistoryItem)it.Tag);
-            return r;
-        }
-
-        void ChangeRunColour()
-        {
-            List<HistoryItem> sel = SelectedRuns();
-            if (sel.Count == 0) { MessageBox.Show(this, "Click a run first (Ctrl+click to pick several).", Text); return; }
-            PickRunColour(sel);
-        }
-
-        void PickRunColour(List<HistoryItem> runs)
-        {
-            Color start = runs[0].Custom ?? (runs[0].Shown.IsEmpty ? PlotControl.Palette[0] : runs[0].Shown);
+            var h = n.Tag as HistoryItem; var sp = n.Tag as SpeedItem;
+            Color start = h != null ? (h.Custom ?? (h.Shown.IsEmpty ? PlotControl.Palette[0] : h.Shown))
+                                    : (sp.Shown.IsEmpty ? PlotControl.Palette[0] : sp.Shown);
             using (var d = new ColorDialog { FullOpen = true, Color = start })
-                if (d.ShowDialog(this) == DialogResult.OK) SetRunColour(runs, d.Color);
+                if (d.ShowDialog(this) == DialogResult.OK) SetColour(n, d.Color);
         }
 
-        void SetRunColour(Color? c) { SetRunColour(SelectedRuns(), c); }
-
-        void SetRunColour(List<HistoryItem> runs, Color? c)
+        /// <summary>Sets (or with null, resets) a test's or a speed's colour, and shows it.</summary>
+        void SetColour(TreeNode n, Color? c)
         {
-            if (runs.Count == 0) return;
-            foreach (HistoryItem h in runs) h.Custom = c;
-            SaveRunColours();
-            _loadingHistory = true;                         // a run you colour is one you want to see
-            foreach (ListViewItem it in _history.Items) if (runs.Contains((HistoryItem)it.Tag)) it.Checked = true;
-            _loadingHistory = false;
-            RefreshAnalysis();
-        }
-
-        void TickSelected(bool on)
-        {
+            var h = n.Tag as HistoryItem; var sp = n.Tag as SpeedItem;
             _loadingHistory = true;
-            foreach (ListViewItem it in _history.SelectedItems) it.Checked = on;
+            if (h != null) { h.Custom = c; n.Checked = true; }
+            else { sp.Custom = c; sp.Visible = true; n.Checked = true; n.Parent.Checked = true; }
             _loadingHistory = false;
+            SaveRunDisplay();
             RefreshAnalysis();
         }
 
-        Dictionary<string, Color> LoadRunColours()
+        // run_colors.ini: "file.csv=#RRGGBB" for a test, "file.csv#step=#RRGGBB;hidden" for a speed
+        Dictionary<string, string> LoadRunDisplay()
         {
-            var d = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 string f = Path.Combine(_set.RunsFolder, RunColorsFile);
@@ -957,26 +1029,46 @@ namespace ShockDyno.App
                     foreach (string line in File.ReadAllLines(f))
                     {
                         int eq = line.LastIndexOf('=');
-                        if (eq <= 0 || line.StartsWith("#")) continue;
-                        string hex = line.Substring(eq + 1).Trim().TrimStart('#');
-                        int rgb;
-                        if (int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out rgb))
-                            d[line.Substring(0, eq).Trim()] = Color.FromArgb(255, Color.FromArgb(rgb));
+                        if (eq > 0 && !line.StartsWith("#")) d[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
                     }
             }
             catch (Exception ex) { Say("Could not read the run colours: " + ex.Message); }
             return d;
         }
 
-        void SaveRunColours()
+        /// <summary>True if a colour is given. hidden: the value says "hidden".</summary>
+        static bool ParseDisplay(string v, out Color c, out bool hidden)
+        {
+            c = Color.Empty; hidden = false; bool has = false;
+            foreach (string part in v.Split(';'))
+            {
+                string t = part.Trim();
+                int rgb;
+                if (t.Equals("hidden", StringComparison.OrdinalIgnoreCase)) hidden = true;
+                else if (t.StartsWith("#") && int.TryParse(t.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out rgb))
+                { c = Color.FromArgb(255, Color.FromArgb(rgb)); has = true; }
+            }
+            return has;
+        }
+
+        static string Hex(Color c) { return "#" + (c.ToArgb() & 0xFFFFFF).ToString("X6"); }
+
+        void SaveRunDisplay()
         {
             try
             {
-                var lines = new List<string> { "# DynamiX: colours chosen for runs in this folder (file name = #RRGGBB)" };
-                foreach (ListViewItem it in _history.Items)
+                var lines = new List<string> { "# DynamiX: colours (#RRGGBB) and hidden speeds for the runs in this folder; file.csv#N = speed N of a test" };
+                foreach (TreeNode n in _history.Nodes)
                 {
-                    var h = (HistoryItem)it.Tag;
-                    if (h.Custom.HasValue) lines.Add(Path.GetFileName(h.Path) + "=#" + (h.Custom.Value.ToArgb() & 0xFFFFFF).ToString("X6"));
+                    var h = (HistoryItem)n.Tag;
+                    if (h.Custom.HasValue) lines.Add(Path.GetFileName(h.Path) + "=" + Hex(h.Custom.Value));
+                    foreach (SpeedItem sp in h.Speeds)
+                    {
+                        var parts = new List<string>();
+                        if (sp.Custom.HasValue) parts.Add(Hex(sp.Custom.Value));
+                        if (!sp.Visible) parts.Add("hidden");
+                        if (parts.Count > 0) lines.Add(sp.Key + "=" + string.Join(";", parts.ToArray()));
+                    }
                 }
                 Directory.CreateDirectory(_set.RunsFolder);
                 File.WriteAllLines(Path.Combine(_set.RunsFolder, RunColorsFile), lines.ToArray());
@@ -1020,7 +1112,7 @@ namespace ShockDyno.App
             RememberProject(folder);
             if (_selfTest == null) { try { _set.Save(Settings.DefaultPath); } catch (Exception) { } }
             Say("Project: " + folder);
-            _loadingHistory = true; foreach (ListViewItem it in _history.Items) it.Checked = false; _loadingHistory = false;
+            _loadingHistory = true; foreach (TreeNode n in _history.Nodes) n.Checked = false; _loadingHistory = false;
             RefreshHistory();
         }
 

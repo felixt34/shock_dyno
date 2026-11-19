@@ -1,3 +1,4 @@
+using System.Linq;
 // Console tests: run the whole chain (protocol, runner, analysis, storage) against the simulator.
 using System;
 using System.Collections.Generic;
@@ -26,6 +27,7 @@ static class Program
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
         TestFullRun(25, 6, 0.5);
+        TestAverageCycles();
         TestBushings(0.03);
         TestBushings(0.08);  // slow drive ramp: cycles during the ramp must not count
         TestSampleClock();
@@ -159,6 +161,22 @@ static class Program
         double raw = MeanForce(rec.Analyze(rig.Set));
         rig.Set.RemoveStaticForce = true;
         Check(Math.Abs(raw - removed - 160) < 10, string.Format("raw view keeps the static force: mean force {0:0} N raw, {1:0} N with it removed", raw, removed));
+    }
+
+    static void TestAverageCycles()
+    {
+        Console.WriteLine("Average of the measured cycles");
+        var rig = new Rig(25);
+        rig.Runner.Start();
+        rig.Run(900);
+        foreach (StepResult r in rig.Runner.Results)
+        {
+            ProcessedCycle a = Analyzer.AverageCycles(r.Cycles);
+            double vmax = a.V.Max(), fmax = a.F.Max();
+            Check(r.Cycles.Count >= 2 && Near(vmax, r.CompPeakVel, 0.02) && Near(fmax, r.CompMaxForce, 0.05),
+                string.Format("{0} mm/s: {1} cycles averaged, peak speed {2:0.0} (cycles {3:0.0}), max force {4:0} N (cycles {5:0})",
+                    r.TargetSpeed, r.Cycles.Count, vmax, r.CompPeakVel, fmax, r.CompMaxForce));
+        }
     }
 
     static double MeanForce(List<StepResult> res)

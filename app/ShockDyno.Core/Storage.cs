@@ -54,7 +54,12 @@ namespace ShockDyno.Core
             FilePath = path;
         }
 
-        public static TestRecord Load(string path)
+        /// <summary>Reads only the header (name, calibration, steps): fast, for listing a test's speeds.</summary>
+        public static TestRecord LoadHeader(string path) { return Load(path, true); }
+
+        public static TestRecord Load(string path) { return Load(path, false); }
+
+        static TestRecord Load(string path, bool headerOnly)
         {
             var r = new TestRecord { FilePath = path, Name = Path.GetFileNameWithoutExtension(path) };
             foreach (string line in File.ReadLines(path))
@@ -91,7 +96,7 @@ namespace ShockDyno.Core
                     }
                     continue;
                 }
-                if (!char.IsDigit(line[0]) && line[0] != '-') continue;   // column header
+                if (!char.IsDigit(line[0]) && line[0] != '-') { if (headerOnly) break; continue; }   // column header
                 string[] c = line.Split(',');
                 if (c.Length < 5) continue;
                 r.Samples.Add(new Sample { T = D(c[0]), X = D(c[1]), F = D(c[2]) });
