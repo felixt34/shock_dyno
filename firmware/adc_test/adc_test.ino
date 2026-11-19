@@ -10,6 +10,13 @@
 // the load cell signals on these boards.
 const uint8_t FORCE_STATUS = 0x02;
 
+// Crosstalk tests between the two boards (change, upload, compare the p-p columns):
+//   READ_...  false: the board keeps converting but is not read (no SPI traffic to it)
+//   STOP_...  true : the board is put in power-down after its start-up check (SYNC/PDWN held low:
+//                    its clock and converter stop), so it cannot disturb the other one
+const bool READ_FORCE = true,  READ_POSITION = true;
+const bool STOP_FORCE = false, STOP_POSITION = false;
+
 struct Adc {
   const char* name;
   SPIClass* spi;
@@ -150,6 +157,8 @@ void setup() {
     a.spi->begin(a.sck, a.miso, a.mosi, -1);
   }
   for (Adc& a : adcs) test(a);
+  if (STOP_FORCE && adcs[0].ok)    { digitalWrite(adcs[0].sync, LOW); Serial.println("ADS #1 (force) put in power-down"); }
+  if (STOP_POSITION && adcs[1].ok) { digitalWrite(adcs[1].sync, LOW); Serial.println("ADS #2 (position) put in power-down"); }
   Serial.printf("\nRESULT: ADS #1 %s, ADS #2 %s\n", adcs[0].ok ? "OK" : "FAIL", adcs[1].ok ? "OK" : "FAIL");
   Serial.println("Noise check: both ADCs read at full speed (500 samples/s); every 0.25 s, the mean and the");
   Serial.println("peak-to-peak spread of each. Force: 1 count ~ 0.0046 N. No USB data stream, no RS-485 traffic.");
@@ -164,7 +173,8 @@ void loop() {
   while (millis() - t0 < 250) {                       // read each board as soon as it has a new sample
     for (int k = 0; k < 2; k++) {
       Adc& a = adcs[k];
-      if (!a.ok || digitalRead(a.drdy) == HIGH) continue;
+      bool read = k == 0 ? (READ_FORCE && !STOP_FORCE) : (READ_POSITION && !STOP_POSITION);
+      if (!a.ok || !read || digitalRead(a.drdy) == HIGH) continue;
       int32_t v = readData(a);
       sum[k] += v; n[k]++;
       if (v < lo[k]) lo[k] = v;
@@ -172,7 +182,12 @@ void loop() {
     }
   }
   for (int k = 0; k < 2; k++) {
-    if (!adcs[k].ok || n[k] == 0) { Serial.print("        no data              |"); continue; }
+    if (!adcs[k].ok || n[k] == 0)
+    {
+      bool stopped = k == 0 ? STOP_FORCE : STOP_POSITION, read = k == 0 ? READ_FORCE : READ_POSITION;
+      Serial.print(!adcs[k].ok ? "        no data              |" : stopped ? "     powered down            |" : !read ? "     running, not read       |" : "        no data              |");
+      continue;
+    }
     long pp = (long)(hi[k] - lo[k]);
     if (k == 0) Serial.printf(" %9ld  p-p %6ld (~%5.1f N) |", (long)(sum[k] / n[k]), pp, pp * 0.0046);
     else        Serial.printf(" %9ld  p-p %6ld  (%3d samples)", (long)(sum[k] / n[k]), pp, n[k]);
