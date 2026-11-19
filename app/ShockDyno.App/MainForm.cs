@@ -106,6 +106,7 @@ namespace ShockDyno.App
             RefreshHistory();
             UpdateUi();
             _uiTimer.Tick += (s, e) => { if (_link != null) _link.KeepAlive(); UpdateUi(); };   // no KeepAlive = no heartbeat = motor stops
+            ApplyScreenRefresh();
             _uiTimer.Start();
             if (selfTest != null) Shown += (s, e) => { _ports.SelectedItem = SimulatorPort; ToggleConnection(); StartTest(); };
         }
@@ -679,6 +680,12 @@ namespace ShockDyno.App
             }
         }
 
+        void ApplyScreenRefresh()
+        {
+            int ms = _set.ScreenRefreshMs <= 0 ? 200 : Math.Max(50, Math.Min(1000, _set.ScreenRefreshMs));   // < 1.5 s: it also keeps the heartbeat going
+            if (_uiTimer.Interval != ms) _uiTimer.Interval = ms;
+        }
+
         void Tare()
         {
             if (_link == null || _recent.Count < 50) return;
@@ -1190,6 +1197,7 @@ namespace ShockDyno.App
             SendLimits();
             _absSpeed.Checked = _set.AbsoluteSpeed;
             _removeStatic.Checked = _set.RemoveStaticForce;
+            ApplyScreenRefresh();
             RememberProject(_set.RunsFolder);
             RefreshHistory();
         }

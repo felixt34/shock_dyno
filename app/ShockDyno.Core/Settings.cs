@@ -18,6 +18,8 @@ namespace ShockDyno.Core
         public string DataFolder { get; set; }
         [Category("1. General"), Description("Project folder: where test runs are saved, and which runs the History list shows. Empty = the data folder. Usually chosen with the Project box above the History list.")]
         public string ProjectFolder { get; set; }
+        [Category("1. General"), Description("How often the screen is refreshed (ms, 50 to 1000). Changing it helps find whether noise at that rate comes from the PC (ground loop through the USB cable).")]
+        public int ScreenRefreshMs { get; set; }
         [Browsable(false)]
         public string RecentProjects { get; set; }      // '|'-separated, most recent first
         [Browsable(false)]
@@ -88,7 +90,7 @@ namespace ShockDyno.Core
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
             CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300;
             ForceLimitN = 3000;
-            FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true;
+            FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.
             ForceNPerCount = 0.0045665; ForceZeroCounts = 0;
             PositionMmPerCount = 4.8447e-5; PositionZeroCounts = 0;
