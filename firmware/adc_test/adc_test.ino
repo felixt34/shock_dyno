@@ -21,6 +21,15 @@ const double LVIT_MM_PER_COUNT = 0.000052827;  // LVIT through the 33k/10k divid
 const bool READ_FORCE = true,  READ_POSITION = true;
 const bool STOP_FORCE = false, STOP_POSITION = false;
 
+// SINGLE-BOARD MODE: load cell AND LVIT on ADS #1 (ADS #2 unplugged).
+//   load cell  on chip AIN0 (+) / AIN1 (-)  = board terminals AIN1 / AIN2  (unchanged)
+//   LVIT pair  on chip AIN2 (+) / AIN3 (-)  = board terminals AIN3 / AIN4
+// ADS #1 alternates: force conversion at gain 64, position conversion at gain 1. Auto-calibration
+// is off (it would recalibrate at every gain change); one self-calibration at gain 64 at start-up.
+const bool    SINGLE_BOARD = true;
+const uint8_t SINGLE_DRATE = 0xA1;   // 1000 samples/s per conversion (each one settled after the switch)
+const uint8_t MUX_FORCE = 0x01, MUX_POSITION = 0x23, ADCON_FORCE = 0x06, ADCON_POSITION = 0x00;
+
 struct Adc {
   const char* name;
   SPIClass* spi;
@@ -37,6 +46,9 @@ Adc adcs[2] = {
 };
 
 const SPISettings kSpi(1000000, MSBFIRST, SPI_MODE1);
+
+void singleSetup();
+void singleLoop();
 
 void cmd(Adc& a, uint8_t c) {
   a.spi->beginTransaction(kSpi);
@@ -160,6 +172,7 @@ void setup() {
     pinMode(a.drdy, INPUT_PULLUP);
     a.spi->begin(a.sck, a.miso, a.mosi, -1);
   }
+  if (SINGLE_BOARD) { singleSetup(); return; }
   for (Adc& a : adcs) test(a);
   if (STOP_FORCE && adcs[0].ok)    { digitalWrite(adcs[0].sync, LOW); Serial.println("ADS #1 (force) put in power-down"); }
   if (STOP_POSITION && adcs[1].ok) { digitalWrite(adcs[1].sync, LOW); Serial.println("ADS #2 (position) put in power-down"); }
@@ -171,7 +184,60 @@ void setup() {
 
 uint32_t rateStart = 0, rateCount[2] = { 0, 0 }, rateLines = 0;
 
+// ------------------------------------------------------------------ single-board mode
+void singleSetup() {
+  adcs[0].status = 0x00;                         // MSB first, auto-calibration OFF, buffer off
+  test(adcs[0]);                                 // reset, registers, read-back, self-cal at gain 64 on the load cell
+  adcs[1].ok = false;
+  if (adcs[0].ok) { waitDrdy(adcs[0], 1000); wreg(adcs[0], 3, SINGLE_DRATE); delay(2); }
+  Serial.printf("\nSINGLE-BOARD MODE: ADS #1 %s (ADS #2 not used)\n", adcs[0].ok ? "OK" : "FAIL");
+  Serial.println("Alternating force (AIN0/AIN1, gain 64) and position (AIN2/AIN3, gain 1). Every 0.25 s:");
+  Serial.println("   force: mean counts, p-p counts (~N)   |   LVIT: mean counts (~mm from 0 V), p-p counts (~mm), pairs");
+}
+
+// Selects the input pair and gain, restarts the converter, waits for the settled result.
+bool convert(Adc& a, uint8_t mux, uint8_t adcon, int32_t& value) {
+  a.spi->beginTransaction(kSpi);
+  digitalWrite(a.cs, LOW);
+  a.spi->transfer(0x51); a.spi->transfer(0x01);  // WREG from MUX, 2 registers
+  a.spi->transfer(mux);  a.spi->transfer(adcon);
+  delayMicroseconds(5);
+  a.spi->transfer(0xFC);                         // SYNC
+  delayMicroseconds(5);
+  a.spi->transfer(0x00);                         // WAKEUP: conversion starts
+  digitalWrite(a.cs, HIGH);
+  a.spi->endTransaction();
+  delayMicroseconds(50);                         // DRDY goes high while converting
+  if (waitDrdy(a, 10) < 0) return false;
+  value = readData(a);
+  return true;
+}
+
+void singleLoop() {
+  Adc& a = adcs[0];
+  if (!a.ok) { delay(1000); return; }
+  long long sum[2] = { 0, 0 };
+  int32_t lo[2] = { INT32_MAX, INT32_MAX }, hi[2] = { INT32_MIN, INT32_MIN };
+  int n = 0, fails = 0;
+  uint32_t t0 = millis();
+  while (millis() - t0 < 250) {
+    int32_t f, x;
+    if (!convert(a, MUX_FORCE, ADCON_FORCE, f) || !convert(a, MUX_POSITION, ADCON_POSITION, x)) { fails++; continue; }
+    sum[0] += f; sum[1] += x; n++;
+    if (f < lo[0]) { lo[0] = f; }
+    if (f > hi[0]) { hi[0] = f; }
+    if (x < lo[1]) { lo[1] = x; }
+    if (x > hi[1]) { hi[1] = x; }
+  }
+  if (n == 0) { Serial.printf("no conversions (%d timeouts)\n", fails); return; }
+  long mf = (long)(sum[0] / n), mx = (long)(sum[1] / n), pf = (long)(hi[0] - lo[0]), px = (long)(hi[1] - lo[1]);
+  Serial.printf(" %9ld  p-p %6ld (~%5.1f N) | %9ld (~%7.2f mm)  p-p %6ld (~%6.3f mm)  %3d pairs (%d/s)%s\n",
+                mf, pf, pf * FORCE_N_PER_COUNT, mx, mx * LVIT_MM_PER_COUNT, px, px * LVIT_MM_PER_COUNT, n, n * 4,
+                fails ? "  TIMEOUTS" : "");
+}
+
 void loop() {
+  if (SINGLE_BOARD) { singleLoop(); return; }
   if (rateStart == 0) rateStart = millis();
   long long sum[2] = { 0, 0 };
   int32_t lo[2] = { INT32_MAX, INT32_MAX }, hi[2] = { INT32_MIN, INT32_MIN };
