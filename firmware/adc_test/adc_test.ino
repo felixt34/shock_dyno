@@ -4,6 +4,52 @@
 // Same pins as firmware/shock_dyno/config.h. Re-upload shock_dyno afterwards.
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
+
+// MLX90614 IR thermometer (GY-906 board) on I2C. SCL on GPIO 0, SDA on GPIO 15: the only free pins
+// that may idle high at power-up. 50 kHz for margin on a longer cable. Its reading is added to every line.
+const bool     USE_IR = true;
+const int      IR_SDA = 15, IR_SCL = 0;
+const uint32_t IR_I2C_HZ = 50000;
+const uint8_t  IR_ADDR = 0x5A;                 // factory address of the MLX90614
+const uint8_t  IR_REG_AMBIENT = 0x06, IR_REG_OBJECT = 0x07;
+bool irFound = false;
+
+// Reads one temperature register. False if the sensor does not answer or flags an error.
+bool irRead(uint8_t reg, float& celsius) {
+  Wire.beginTransmission(IR_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;           // repeated start, as the MLX90614 needs
+  if (Wire.requestFrom((int)IR_ADDR, 3) != 3) return false;
+  uint16_t raw = Wire.read();
+  raw |= (uint16_t)Wire.read() << 8;
+  Wire.read();                                                    // PEC (checksum), not checked here
+  if (raw & 0x8000) return false;                                 // error flag set by the sensor
+  celsius = raw * 0.02f - 273.15f;                                // 0.02 K per count
+  return true;
+}
+
+void irSetup() {
+  if (!USE_IR) return;
+  Wire.begin(IR_SDA, IR_SCL, IR_I2C_HZ);
+  Wire.beginTransmission(IR_ADDR);
+  irFound = Wire.endTransmission() == 0;
+  float a, o;
+  if (irFound && irRead(IR_REG_AMBIENT, a) && irRead(IR_REG_OBJECT, o))
+    Serial.printf("IR sensor (MLX90614 at 0x5A) found: object %.2f C, sensor body %.2f C\n", o, a);
+  else if (irFound)
+    Serial.println("IR sensor answers at 0x5A but the temperature read failed");
+  else
+    Serial.println("IR sensor NOT found at 0x5A: check SDA -> GPIO 15, SCL -> GPIO 0, VIN -> 3.3 V, GND");
+}
+
+// Appends "| IR object x C, body y C" to the current line (read between measurement windows).
+void irPrint() {
+  if (!USE_IR) return;
+  float a, o;
+  if (irRead(IR_REG_OBJECT, o) && irRead(IR_REG_AMBIENT, a)) Serial.printf("  | IR object %6.2f C, body %6.2f C", o, a);
+  else Serial.print("  | IR no reading");
+}
 
 // Input buffer of the force ADC (STATUS register). 0x02 = buffer off (as in the main firmware),
 // 0x06 = buffer on. With the buffer on, both inputs must stay below AVDD - 2 V, which clipped
@@ -174,6 +220,7 @@ void setup() {
     pinMode(a.drdy, INPUT_PULLUP);
     a.spi->begin(a.sck, a.miso, a.mosi, -1);
   }
+  irSetup();
   if (SINGLE_BOARD) { singleSetup(); return; }
   for (Adc& a : adcs) test(a);
   if (STOP_FORCE && adcs[0].ok)    { digitalWrite(adcs[0].sync, LOW); Serial.println("ADS #1 (force) put in power-down"); }
@@ -233,9 +280,11 @@ void singleLoop() {
   }
   if (n == 0) { Serial.printf("no conversions (%d timeouts)\n", fails); return; }
   long mf = (long)(sum[0] / n), mx = (long)(sum[1] / n), pf = (long)(hi[0] - lo[0]), px = (long)(hi[1] - lo[1]);
-  Serial.printf(" %9ld  p-p %6ld (~%5.1f N) | %9ld (~%7.2f mm)  p-p %6ld (~%6.3f mm)  %3d pairs (%d/s)%s\n",
+  Serial.printf(" %9ld  p-p %6ld (~%5.1f N) | %9ld (~%7.2f mm)  p-p %6ld (~%6.3f mm)  %3d pairs (%d/s)%s",
                 mf, pf, pf * FORCE_N_PER_COUNT, mx, mx * LVIT_MM_PER_COUNT, px, px * LVIT_MM_PER_COUNT, n, n * 4,
                 fails ? "  TIMEOUTS" : "");
+  irPrint();
+  Serial.println();
 }
 
 void loop() {
@@ -268,6 +317,7 @@ void loop() {
     if (k == 0) Serial.printf(" %9ld  p-p %6ld (~%5.1f N) |", mean, pp, pp * FORCE_N_PER_COUNT);
     else        Serial.printf(" %9ld (~%7.2f mm)  p-p %6ld (~%6.3f mm)  (%3d samples)", mean, mean * LVIT_MM_PER_COUNT, pp, pp * LVIT_MM_PER_COUNT, n[k]);
   }
+  irPrint();
   Serial.println();
   // every 10 s: the real sample rate of each board read, and their difference
   if (++rateLines >= 40) {
