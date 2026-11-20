@@ -27,6 +27,7 @@ static class Program
         TestFullRun(75, 5);       // 15 mm/s needs 0.33 Hz at 75 mm: skipped
         TestFullRun(12.5, 5);     // 500 mm/s needs 65 Hz at 12.5 mm: skipped
         TestFullRun(25, 6, 0.5);
+        TestSkipCalibration();
         TestAverageCycles();
         TestBushings(0.03);
         TestBushings(0.08);  // slow drive ramp: cycles during the ramp must not count
@@ -161,6 +162,21 @@ static class Program
         double raw = MeanForce(rec.Analyze(rig.Set));
         rig.Set.RemoveStaticForce = true;
         Check(Math.Abs(raw - removed - 160) < 10, string.Format("raw view keeps the static force: mean force {0:0} N raw, {1:0} N with it removed", raw, removed));
+    }
+
+    static void TestSkipCalibration()
+    {
+        Console.WriteLine("Calibration cycle skipped (nominal amplitude 25 mm, crank actually at 12.5 mm)");
+        var rig = new Rig(12.5);
+        rig.Set.SkipCalibrationCycle = true; rig.Set.NominalAmplitudeMm = 25;
+        rig.Runner.Start();
+        rig.Run(900);
+        Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        CalibrationResult c = rig.Runner.Calibration;
+        Check(c != null && Near(c.AmplitudeMm, 12.5, 0.02), "amplitude measured from the first steady cycle: " + (c == null ? "none" : c.AmplitudeMm.ToString("0.00") + " mm"));
+        Check(c != null && Near(c.GasForceN, 155, 0.05), "gas force at mid-stroke " + (c == null ? "-" : c.GasForceN.ToString("0")) + " N (model 155)");
+        foreach (StepResult r in rig.Runner.Results)
+            Check(Near(r.CompPeakVel, r.TargetSpeed, 0.04), string.Format("{0} mm/s step measured at {1:0.0} mm/s", r.TargetSpeed, r.CompPeakVel));
     }
 
     static void TestAverageCycles()

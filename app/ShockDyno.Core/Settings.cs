@@ -48,6 +48,10 @@ namespace ShockDyno.Core
         public double CycleHysteresisMm { get; set; }
         [Category("3. Test"), Description("At the end of a completed test, turn the crank slowly (calibration frequency) and stop it at bottom dead centre.")]
         public bool ReturnToBdc { get; set; }
+        [Category("3. Test"), Description("True: no slow calibration cycle at the start of a test. The amplitude, bottom dead centre and static force (preload, gas force) are then taken from the first steady cycle of the first step (usually the warm-up), and that step's speed is corrected once they are known. Faster, but the static force is measured at speed, so it is less accurate than with the slow calibration cycle.")]
+        public bool SkipCalibrationCycle { get; set; }
+        [Category("3. Test"), Description("Crank amplitude (mm, half stroke) set on the machine. Only used when the calibration cycle is skipped, for the speed of the first step until the amplitude has been measured.")]
+        public double NominalAmplitudeMm { get; set; }
         [Category("3. Test"), Description("Time (ms) from the stop command until the crank has stopped. The stop is sent this much before bottom dead centre. The log after each test says how far from BDC the crank stopped: raise this value if it stops past BDC (rising again), lower it if it stops before.")]
         public double StopLagMs { get; set; }
 
@@ -88,7 +92,7 @@ namespace ShockDyno.Core
             DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShockDyno");
             LastPort = "";
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
-            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300;
+            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
             FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.

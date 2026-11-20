@@ -29,6 +29,7 @@ namespace ShockDyno.Core
         double _prevPeriod, _prevPeriod2, _prevPeriod3, _expectedPeriod, _commandTime, _lastProgressTime, _motorHz;
         double _speedFactor = 1;   // actual crank speed / nominal crank speed (motor slip, ratio error)
 
+        bool _motorRunning;
         BdcParker _parker;                // return to bottom dead centre after the last step
         double _driveHz = double.NaN;     // last output frequency reported by the drive
         // Constant speed: the drive reports the commanded frequency (its acceleration ramp is over).
@@ -73,6 +74,14 @@ namespace ShockDyno.Core
             Calibration = null;
             CurrentStep = -1;
             Started = DateTime.Now;
+            _motorRunning = false;
+            if (_set.SkipCalibrationCycle)
+            {
+                Say(string.Format("Calibration cycle skipped: amplitude, preload and gas force will come from the first steady cycle (speeds use {0:0.#} mm amplitude until then)", _set.NominalAmplitudeMm));
+                NextStep();
+                Raise(Progress);
+                return;
+            }
             Phase = RunPhase.Calibrating;
             Say("Calibration cycle: measuring amplitude, preload and gas force");
             Command(_set.CalibrationMotorHz, true);
@@ -197,6 +206,26 @@ namespace ShockDyno.Core
                 return;
             }
 
+            if (Calibration == null)                           // calibration cycle skipped: geometry from the first steady cycle
+            {
+                if (!steady) return;
+                Calibration = Analyzer.Calibrate(_samples, prev, j, _set);
+                _speedFactor = Clamp(Calibration.CrankHz / Kinematics.CrankHz(_motorHz, _set), 0.8, 1.2);
+                Say(string.Format("From the first steady cycle: amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N, static slope {3:0.00} N/mm (measured at speed)",
+                    Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN, Calibration.StaticSlopeNPerMm));
+                var hcal = Calibrated; if (hcal != null) hcal(Calibration);
+                SequenceStep cur = _seq.Steps[CurrentStep];       // redo this step's speed with the measured amplitude
+                double hz = Kinematics.MotorHzForSpeed(cur.SpeedMmS, Calibration.AmplitudeMm, _set) / _speedFactor;
+                if (hz < _set.MinMotorHz || hz > _set.MaxMotorHz) { CurrentStep--; NextStep(); return; }   // NextStep reports the skip
+                if (Math.Abs(hz / _motorHz - 1) > 0.01)
+                {
+                    Say(string.Format("    corrected to {0:0.00} Hz for {1:0.#} mm/s", hz, cur.SpeedMmS));
+                    _stepHz[CurrentStep] = hz;
+                    Command(hz, false);
+                }
+                return;
+            }
+
             SequenceStep step = _seq.Steps[CurrentStep];
             ProcessedCycle c = Analyzer.Process(_samples, prev, j, _set, Calibration);
             c.Step = CurrentStep;
@@ -246,7 +275,8 @@ namespace ShockDyno.Core
                     return;
                 }
                 SequenceStep step = _seq.Steps[CurrentStep];
-                double hz = Kinematics.MotorHzForSpeed(step.SpeedMmS, Calibration.AmplitudeMm, _set) / _speedFactor;
+                double amp = Calibration != null ? Calibration.AmplitudeMm : _set.NominalAmplitudeMm;
+                double hz = Kinematics.MotorHzForSpeed(step.SpeedMmS, amp, _set) / _speedFactor;
                 if (hz < _set.MinMotorHz || hz > _set.MaxMotorHz)
                 {
                     Say(string.Format("Skipped {0:0.#} mm/s: needs {1:0.00} Hz at this amplitude (allowed {2:0.##} to {3:0.##} Hz)",
@@ -273,7 +303,8 @@ namespace ShockDyno.Core
             _fullCyclesSinceCommand = 0; _consistentOffTarget = 0;
             _atSpeedSince = double.NaN;
             _stepCycles.Clear(); _stepPeriods.Clear();
-            if (start) _link.MotorRun(hz); else _link.MotorSetFreq(hz);
+            if (start || !_motorRunning) _link.MotorRun(hz); else _link.MotorSetFreq(hz);   // the first command starts the motor
+            _motorRunning = true;
         }
 
         void Abort(string reason)
