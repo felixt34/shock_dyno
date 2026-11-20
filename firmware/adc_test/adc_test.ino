@@ -27,7 +27,9 @@ const bool STOP_FORCE = false, STOP_POSITION = false;
 // ADS #1 alternates: force conversion at gain 64, position conversion at gain 1. Auto-calibration
 // is off (it would recalibrate at every gain change); one self-calibration at gain 64 at start-up.
 const bool    SINGLE_BOARD = true;
-const uint8_t SINGLE_DRATE = 0xA1;   // 1000 samples/s per conversion (each one settled after the switch)
+// Conversion rate setting (each conversion is settled after the switch). Faster = more pairs, more noise:
+//   0xA1 = 1000/s -> ~380 pairs/s     0xB0 = 2000/s -> ~650 pairs/s     0xC0 = 3750/s -> ~1000 pairs/s
+const uint8_t SINGLE_DRATE = 0xB0;
 const uint8_t MUX_FORCE = 0x01, MUX_POSITION = 0x23, ADCON_FORCE = 0x06, ADCON_POSITION = 0x00;
 
 struct Adc {
