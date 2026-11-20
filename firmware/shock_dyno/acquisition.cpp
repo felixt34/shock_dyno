@@ -1,5 +1,6 @@
-// Reads both ADS1256 on their DRDY interrupts, timestamps every conversion and
-// produces time-aligned (force, position) samples at the force ADC's sample times.
+// Reads the ADS1256 on DRDY interrupts, timestamps every conversion and produces time-aligned
+// (force, position) samples at the force sample times. Two boards (one per sensor), or with
+// SINGLE_ADC one board alternating between the two inputs.
 #include "shared.h"
 #include "ads1256.h"
 #include "soc/gpio_struct.h"
@@ -91,6 +92,50 @@ void onPosition(uint32_t t, int32_t v) {
   resolvePending();
 }
 
+#if SINGLE_ADC
+// One conversion on ADS #1: switch input and gain, restart, wait for DRDY (interrupt).
+// t = time of DRDY (end of the conversion), the same reference for force and position.
+bool convertOne(uint8_t mux, uint8_t adcon, uint32_t& t, int32_t& v) {
+  adcForce.startConversion(mux, adcon);
+  delayMicroseconds(20);
+  uint32_t bits = 0;
+  xTaskNotifyWait(0, 0xFFFFFFFF, &bits, 0);        // drop edges from before the restart
+  uint32_t t0 = micros();
+  for (;;) {
+    if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(2)) == pdTRUE && (bits & BIT_FORCE)) { t = isrForceUs; break; }
+    if (digitalRead(PIN_ADC1_DRDY) == LOW && micros() - t0 > 300) { t = (uint32_t)esp_timer_get_time(); break; }   // edge missed
+    if (micros() - t0 > ADC_CONVERSION_TIMEOUT_US) return false;
+  }
+  v = adcForce.readData();
+  return true;
+}
+
+void taskSingle() {
+  int fails = 0;
+  for (;;) {
+    if (!sh.adcOk) {
+      if (adcForce.configure(ADC_SINGLE_STATUS, ADC_MUX_FORCE, ADC1_ADCON, ADC_SINGLE_DRATE)) {
+        nPending = 0; nPos = 0; overLimit = 0; fails = 0;
+        sh.adcOk = true;
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+      }
+      continue;
+    }
+    if (sh.resyncRequest) { sh.resyncRequest = false; nPending = 0; nPos = 0; }
+    uint32_t tf, tp; int32_t f, x;
+    if (!convertOne(ADC_MUX_FORCE, ADC1_ADCON, tf, f) || !convertOne(ADC_MUX_POSITION, ADC2_ADCON, tp, x)) {
+      if (++fails >= 3) sh.adcOk = false;           // converter not answering: re-initialise (motor stops on ADC timeout)
+      continue;
+    }
+    fails = 0;
+    onForce(tf, f);                                 // position is interpolated at the force time,
+    onPosition(tp, x);                              // between the position before and the one after
+    vTaskDelay(0);                                  // let other ready tasks on this core run
+  }
+}
+#endif
+
 bool initAdcs() {
   bool ok1 = adcForce.configure(ADC_STATUS, ADC_MUX, ADC1_ADCON, ADC_DRATE);
   bool ok2 = adcPos.configure(ADC_STATUS, ADC_MUX, ADC2_ADCON, ADC_DRATE);
@@ -101,6 +146,9 @@ bool initAdcs() {
 }
 
 void taskMain(void*) {
+#if SINGLE_ADC
+  taskSingle();
+#endif
   uint32_t lastForceMs = 0, lastPosMs = 0;
   for (;;) {
     if (!sh.adcOk) {
@@ -135,8 +183,12 @@ void taskMain(void*) {
 
 void acquisitionBegin() {
   adcForce.beginPins();
+#if !SINGLE_ADC
   adcPos.beginPins();
+#endif
   xTaskCreatePinnedToCore(taskMain, "acq", 4096, nullptr, 20, &acqTask, 1);
   attachInterrupt(digitalPinToInterrupt(PIN_ADC1_DRDY), onForceDrdy, FALLING);
+#if !SINGLE_ADC
   attachInterrupt(digitalPinToInterrupt(PIN_ADC2_DRDY), onPosDrdy, FALLING);
+#endif
 }

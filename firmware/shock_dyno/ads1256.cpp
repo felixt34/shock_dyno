@@ -2,6 +2,7 @@
 #include "config.h"
 
 namespace {
+const uint8_t CMD_WAKEUP = 0x00, CMD_SYNC = 0xFC;
 const uint8_t CMD_RDATA = 0x01, CMD_SDATAC = 0x0F, CMD_RREG = 0x10, CMD_WREG = 0x50, CMD_SELFCAL = 0xF0;
 const uint8_t REG_STATUS = 0x00, REG_MUX = 0x01, REG_ADCON = 0x02, REG_DRATE = 0x03;
 const SPISettings kSpi(ADC_SPI_HZ, MSBFIRST, SPI_MODE1);
@@ -88,6 +89,19 @@ bool Ads1256::configure(uint8_t status, uint8_t mux, uint8_t adcon, uint8_t drat
   command(CMD_SELFCAL);
   delay(20);
   return waitDrdyLow(2000);
+}
+
+void Ads1256::startConversion(uint8_t mux, uint8_t adcon) {
+  spi_.beginTransaction(kSpi);
+  digitalWrite(p_.cs, LOW);
+  spi_.transfer(CMD_WREG | REG_MUX); spi_.transfer(0x01);   // MUX and ADCON in one write
+  spi_.transfer(mux); spi_.transfer(adcon);
+  delayMicroseconds(5);                                       // > 4 master-clock periods
+  spi_.transfer(CMD_SYNC);
+  delayMicroseconds(5);                                       // > 24 master-clock periods
+  spi_.transfer(CMD_WAKEUP);
+  digitalWrite(p_.cs, HIGH);
+  spi_.endTransaction();
 }
 
 int32_t Ads1256::readData() {

@@ -15,6 +15,9 @@ class Ads1256 {
   bool configure(uint8_t status, uint8_t mux, uint8_t adcon, uint8_t drate);
   // Reads the latest conversion (call after DRDY has gone low). Signed 24-bit result.
   int32_t readData();
+  // Selects the input pair and gain, then restarts the converter (SYNC + WAKEUP): the next DRDY
+  // brings a result fully settled on the new input. Used to alternate inputs on one chip.
+  void startConversion(uint8_t mux, uint8_t adcon);
   bool waitDrdyLow(uint32_t timeoutMs);
   uint8_t readRegister(uint8_t reg);
   const Pins& pins() const { return p_; }

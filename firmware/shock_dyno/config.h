@@ -28,11 +28,24 @@
 #define ADC1_ADCON            0x06      // force:    PGA 64, clock out off
 #define ADC2_ADCON            0x00      // position: PGA 1,  clock out off
 #define ADC_MUX               0x01      // AIN0 (+) / AIN1 (-)  = board terminals AIN1 / AIN2
-#define ADC_STATUS            0x02      // MSB first, auto-calibration on, input buffer OFF.
-// With the buffer on, the inputs must stay below AVDD - 2 V; on these boards that clipped the
-// load cell signals (about 2.5 V each) and the force read about 40x too small. Measured
-// 2026-11-17: buffer off gives the expected 0.27 mV for 134.75 N. The lower input impedance
-// without the buffer is a small fixed gain error that the sensor calibration takes out.
+#define ADC_STATUS            0x02      // two-board mode: MSB first, auto-calibration OFF, input buffer ON.
+// STATUS bits: 3 = ORDER, 2 = ACAL (auto-calibration), 1 = BUFEN (input buffer). With 0x06
+// (auto-calibration on) the force read about 40x too small; 0x02 fixed it (2026-11-17).
+// (Earlier comments said 0x02 turned the buffer off: it is auto-calibration that 0x02 turns off.)
+
+// ---------- single-board mode: load cell AND LVIT on ADS #1 ----------
+// The second board disturbed the force reading (about 6-8 N instead of 1 N). With SINGLE_ADC,
+// ADS #1 alternates a force conversion (AIN0/AIN1, gain 64) and a position conversion (AIN2/AIN3,
+// gain 1), restarting the converter (SYNC + WAKEUP) after each switch so every result is settled.
+// ADS #2 is not used (unplug it). Validated with firmware/adc_test (SINGLE_BOARD) on 2026-11-19.
+//   load cell  on chip AIN0 (+) / AIN1 (-)  = board terminals AIN1 / AIN2
+//   LVIT pair  on chip AIN2 (+) / AIN3 (-)  = board terminals AIN3 / AIN4
+#define SINGLE_ADC            1
+#define ADC_SINGLE_STATUS     0x00      // MSB first, auto-calibration OFF (it would recalibrate at every gain change), buffer off
+#define ADC_SINGLE_DRATE      0xB0      // 2000 conversions/s -> about 600 force + position pairs/s
+#define ADC_MUX_FORCE         0x01      // AIN0 (+) / AIN1 (-)
+#define ADC_MUX_POSITION      0x23      // AIN2 (+) / AIN3 (-)
+#define ADC_CONVERSION_TIMEOUT_US 5000  // one conversion takes about 0.7 ms
 
 // ---------- MAX485 / VFD (Modbus RTU on UART2) ----------
 #define PIN_RS485_TX          17

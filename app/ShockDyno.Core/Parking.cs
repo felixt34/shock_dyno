@@ -27,7 +27,7 @@ namespace ShockDyno.Core
         int _n, _seekMode;
         double _min = double.MaxValue, _max = double.MinValue;
 
-        readonly Queue<double> _recent = new Queue<double>();      // last 50 ms of position (500 samples/s)
+        readonly Queue<double[]> _recent = new Queue<double[]>();  // last 50 ms of { time, position }, whatever the sample rate
 
         public BdcParker(IDynoLink link, Settings set) { _link = link; _set = set; }
 
@@ -102,12 +102,12 @@ namespace ShockDyno.Core
             }
 
             double xr = x - _bdc;
-            _recent.Enqueue(xr);
-            if (_recent.Count > 25) _recent.Dequeue();
-            double moved = xr - _recent.Peek();                   // over the last 50 ms
+            _recent.Enqueue(new[] { t, xr });
+            while (_recent.Count > 2 && t - _recent.Peek()[0] > 0.05) _recent.Dequeue();
+            double moved = xr - _recent.Peek()[1];                // over the last 50 ms
             if (!_stopSent)
             {
-                bool full = _recent.Count == 25, slow = Math.Abs(moved) < _maxMove;
+                bool full = t - _recent.Peek()[0] > 0.04, slow = Math.Abs(moved) < _maxMove;
                 bool falling = full && slow && moved < -0.01;
                 if (falling && xr < 0.25 * _amp) _approaching = true;
                 if (falling && xr <= _margin) SendStop(t, null);
