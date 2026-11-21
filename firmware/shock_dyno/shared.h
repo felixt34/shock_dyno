@@ -27,6 +27,9 @@ struct Shared {
   // drive
   volatile bool     vfdOk = false;
   volatile uint16_t vfdFreq = 0, vfdFault = 0, vfdStatus = 0;
+  // IR thermometer: irDone is set by the ir task, cleared by comm when it sends the reading
+  volatile bool     irDone = false, irOk = false;
+  volatile int16_t  irObject = 0, irBody = 0;   // 0.01 C
 };
 
 extern Shared sh;
@@ -47,3 +50,7 @@ void acquisitionBegin();
 
 // comm.cpp
 void commBegin();
+
+// ir.cpp
+void irBegin();
+void irRequest();                                  // read once; the result appears in sh.irDone/irOk/irObject/irBody

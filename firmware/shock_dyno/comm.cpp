@@ -70,6 +70,7 @@ void handleEvent(const uint8_t* p, uint8_t len) {
       return;
     case proto::EV_MOTOR_STOP:  sendAck(id, cmdMotorStop()); return;
     case proto::EV_CLEAR_FAULT: sendAck(id, cmdClearFault()); return;
+    case proto::EV_READ_TEMP:   irRequest(); return;          // answered with EV_TEMP
     default: sendAck(id, proto::RES_UNKNOWN); return;
   }
 }
@@ -99,6 +100,13 @@ void taskMain(void*) {
       Serial.write(txBuf, n);
       nPoints = 0;
       lastFlush = now;
+    }
+    if (sh.irDone) {
+      sh.irDone = false;
+      uint8_t p[6] = { proto::EV_TEMP, (uint8_t)(sh.irOk ? 1 : 0) };
+      proto::putI16(p + 2, sh.irObject);
+      proto::putI16(p + 4, sh.irBody);
+      sendEvent(p, sizeof(p));
     }
     if (now - lastStatus >= STATUS_PERIOD_MS) {
       lastStatus = now;

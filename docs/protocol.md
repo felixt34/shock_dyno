@@ -41,8 +41,9 @@ The first payload byte is the event id.
 | `06` | MOTOR_SET_FREQ | u16 frequency (0.01 Hz) | only while running |
 | `07` | MOTOR_STOP | – | |
 | `08` | CLEAR_FAULT | – | clears the latched fault and sends a fault reset to the drive |
+| `09` | READ_TEMP | – | reads the MLX90614 IR thermometer once; answered with TEMP (no ACK) |
 
-Every command except HEARTBEAT is answered with an ACK.
+Every command except HEARTBEAT and READ_TEMP is answered with an ACK. (Firmware without the thermometer answers READ_TEMP with ACK "unknown command".)
 
 ### ESP32 → PC
 
@@ -50,6 +51,7 @@ Every command except HEARTBEAT is answered with an ACK.
 |---|---|---|
 | `81` | STATUS (every 100 ms) | u8 state, u8 fault, u8 flags, u16 drive output frequency (0.01 Hz), u16 drive fault code, u16 dropped samples, u8 drive status word |
 | `82` | ACK | u8 event id, u8 result |
+| `83` | TEMP | u8 ok (0 = sensor did not answer), i16 object (damper) temperature (0.01 °C), i16 sensor body temperature (0.01 °C) |
 
 - **state**: 0 idle, 1 running, 2 fault (latched until CLEAR_FAULT)
 - **fault**: 0 none, 1 PC heartbeat lost (> 500 ms), 2 force limit, 3 safety circuit open, 4 drive communication lost, 5 drive fault, 6 ADC samples stopped

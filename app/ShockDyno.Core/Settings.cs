@@ -20,6 +20,8 @@ namespace ShockDyno.Core
         public string ProjectFolder { get; set; }
         [Category("1. General"), Description("How often the screen is refreshed (ms, 50 to 1000). Changing it helps find whether noise at that rate comes from the PC (ground loop through the USB cable).")]
         public int ScreenRefreshMs { get; set; }
+        [Category("1. General"), Description("Damper temperature (IR thermometer) shown in the Machine box: read every this many seconds while no test runs. 0 = only at the start of a test and of each speed. During a test it is only read at those moments.")]
+        public double TemperatureRefreshS { get; set; }
         [Browsable(false)]
         public string RecentProjects { get; set; }      // '|'-separated, most recent first
         [Browsable(false)]
@@ -98,7 +100,7 @@ namespace ShockDyno.Core
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
             CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
-            FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200;
+            FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200; TemperatureRefreshS = 2;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.
             ForceNPerCount = 0.0045665; ForceZeroCounts = 0;
             PositionMmPerCount = 4.8447e-5; PositionZeroCounts = 0;

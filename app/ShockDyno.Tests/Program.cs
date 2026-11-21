@@ -38,6 +38,8 @@ static class Program
         TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
+        TestTemperature(true);
+        TestTemperature(false);
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : _failed + " TEST(S) FAILED");
         return _failed == 0 ? 0 : 1;
     }
@@ -123,6 +125,7 @@ static class Program
             Sim.SamplesReceived += Runner.OnSamples;
             Sim.StatusReceived += Runner.OnStatus;
             Sim.AckReceived += Runner.OnAck;
+            Sim.TemperatureReceived += Runner.OnTemperature;
             Runner.Finished += (ok, msg) => { Success = ok; Message = msg; };
             Runner.Log += Log.Add;
             Sim.Open();
@@ -244,6 +247,36 @@ static class Program
         string sum = Path.Combine(Path.GetTempPath(), "dyno_summary.csv");
         TestRecord.ExportSummary(sum, new[] { new KeyValuePair<string, List<StepResult>>(back.Name, again) }, UnitSystem.Imperial);
         Check(File.ReadAllLines(sum).Length == again.Count + 1, "summary export has one row per speed");
+    }
+
+    /// <summary>IR thermometer: read at the start of the test and of every speed, saved, reloaded and exported.</summary>
+    static void TestTemperature(bool sensor)
+    {
+        Console.WriteLine("Damper temperature, " + (sensor ? "sensor fitted" : "no sensor"));
+        var rig = new Rig(25);
+        rig.Sim.IrSensor = sensor; rig.Sim.DamperC = 30;
+        rig.Runner.Start();
+        rig.Run(900);
+        Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        var res = rig.Runner.Results;
+        if (!sensor)
+        {
+            Check(double.IsNaN(rig.Runner.StartTempC) && res.All(r => double.IsNaN(r.TempC)), "no temperatures recorded without a sensor");
+            return;
+        }
+        Check(Near(rig.Runner.StartTempC, 30, 0.01), "start temperature " + rig.Runner.StartTempC.ToString("0.00") + " C (model 30)");
+        Check(res.Count > 0 && res.All(r => !double.IsNaN(r.TempC)), "every measured speed has its start temperature");
+        Check(res.Count > 1 && res[res.Count - 1].TempC > res[0].TempC, string.Format("damper warms up during the test: {0:0.00} -> {1:0.00} C", res[0].TempC, res[res.Count - 1].TempC));
+        string path = Path.Combine(Path.GetTempPath(), "dyno_temp.csv");
+        rig.Runner.BuildRecord("temp", "").Save(path);
+        TestRecord back = TestRecord.Load(path);
+        List<StepResult> again = back.Analyze(rig.Set);
+        Check(Near(back.StartTempC, rig.Runner.StartTempC, 0.001) && again.Count == res.Count && again.Zip(res, (a, b) => Math.Abs(a.TempC - b.TempC) < 0.01).All(x => x),
+            "temperatures saved and reloaded");
+        string sum = Path.Combine(Path.GetTempPath(), "dyno_summary_t.csv");
+        TestRecord.ExportSummary(sum, new[] { new KeyValuePair<string, List<StepResult>>(back.Name, again) }, UnitSystem.SI);
+        string[] lines = File.ReadAllLines(sum);
+        Check(lines[0].EndsWith("damper_temperature_at_speed_start_C") && lines[1].Split(',').Last().Length > 0, "summary export has the temperature column");
     }
 
     static double Model(double v, double c1, double knee, double c2)

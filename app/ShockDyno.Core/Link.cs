@@ -11,6 +11,8 @@ namespace ShockDyno.Core
         event Action<RawSample[]> SamplesReceived;
         event Action<DynoStatus> StatusReceived;
         event Action<EventId, CommandResult> AckReceived;
+        /// <summary>Answer to RequestTemperature.</summary>
+        event Action<TempReading> TemperatureReceived;
         event Action<string> Disconnected;
         void Open();
         void Close();
@@ -21,6 +23,8 @@ namespace ShockDyno.Core
         void MotorSetFreq(double hz);
         void MotorStop();
         void ClearFault();
+        /// <summary>Asks the ESP32 to read the IR thermometer once (answered by TemperatureReceived).</summary>
+        void RequestTemperature();
         /// <summary>
         /// Call regularly from the user-interface thread. Heartbeats are only sent while this keeps being
         /// called, so a frozen application stops the motor just like a pulled cable.
@@ -43,6 +47,7 @@ namespace ShockDyno.Core
         public event Action<RawSample[]> SamplesReceived;
         public event Action<DynoStatus> StatusReceived;
         public event Action<EventId, CommandResult> AckReceived;
+        public event Action<TempReading> TemperatureReceived;
         public event Action<string> Disconnected;
 
         public abstract bool IsOpen { get; }
@@ -115,6 +120,12 @@ namespace ShockDyno.Core
                     var h = StatusReceived;
                     if (st != null && h != null) h(st);
                 }
+                else if (payload[0] == (byte)EventId.Temp)
+                {
+                    var t = Packet.ParseTemp(payload);
+                    var h = TemperatureReceived;
+                    if (t.HasValue && h != null) h(t.Value);
+                }
                 else if (payload[0] == (byte)EventId.Ack && payload.Length >= 3)
                 {
                     var h = AckReceived;
@@ -144,6 +155,7 @@ namespace ShockDyno.Core
         public void MotorSetFreq(double hz) { Send(Packet.EncodeEvent(EventId.MotorSetFreq, Hz(hz))); }
         public void MotorStop() { Send(Packet.EncodeEvent(EventId.MotorStop)); }
         public void ClearFault() { Send(Packet.EncodeEvent(EventId.ClearFault)); }
+        public void RequestTemperature() { Send(Packet.EncodeEvent(EventId.ReadTemp)); }
         public void SetForceLimits(int loCounts, int hiCounts)
         {
             var a = new byte[8];

@@ -21,9 +21,11 @@ enum Event : uint8_t {
   EV_MOTOR_SET_FREQ   = 0x06,           // u16 frequency, 0.01 Hz
   EV_MOTOR_STOP       = 0x07,
   EV_CLEAR_FAULT      = 0x08,
+  EV_READ_TEMP        = 0x09,           // read the IR thermometer once; answered with EV_TEMP
   // ESP32 -> PC
   EV_STATUS           = 0x81,           // see StatusPayload
   EV_ACK              = 0x82,           // u8 event id, u8 result
+  EV_TEMP             = 0x83,           // u8 ok, i16 object (damper) 0.01 C, i16 sensor body 0.01 C
 };
 
 enum State : uint8_t { ST_IDLE = 0, ST_RUNNING = 1, ST_FAULT = 2 };
@@ -65,6 +67,7 @@ class Decoder {
 
 inline void putU16(uint8_t* p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 inline void putU32(uint8_t* p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+inline void putI16(uint8_t* p, int16_t v)  { p[0] = v & 0xFF; p[1] = ((uint16_t)v) >> 8; }
 inline void putI24(uint8_t* p, int32_t v)  { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; }
 inline uint16_t getU16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 inline int32_t  getI32(const uint8_t* p) {

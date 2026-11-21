@@ -71,6 +71,17 @@
 #define VFD_STATUS_FAULT      0x0004
 #define VFD_MAX_FREQ_CHZ      7000      // refuse commands above 70.00 Hz
 
+// ---------- MLX90614 (GY-906) IR thermometer: damper temperature ----------
+// I2C, read only when the PC asks (start of a test and of every speed, and about once a second while
+// no test runs), so the I2C traffic never runs alongside a measurement.
+//   VIN -> 3.3 V   GND -> GND   SCL -> GPIO 0   SDA -> GPIO 15   (tested with firmware/ir_test)
+// GPIO 0 and 15 are boot strapping pins: the module's pull-ups keep them high, which is what boot needs.
+#define USE_IR                1         // 0 = no sensor fitted (the PC then shows no temperature)
+#define PIN_IR_SDA            15
+#define PIN_IR_SCL            0
+#define IR_I2C_HZ             50000     // the MLX90614 allows up to 100 kHz
+#define IR_ADDRESS            0x5A      // factory address
+
 // ---------- Safety circuit state input ----------
 // Dry (potential-free) relay contact from the drive, between GPIO35 and GND.
 // External 1 k pull-up to 3V3 and 100 nF to GND at the pin (GPIO35 has no internal pull-up).

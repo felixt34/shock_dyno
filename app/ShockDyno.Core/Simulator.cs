@@ -33,6 +33,9 @@ namespace ShockDyno.Core
         public void SetCrankAngle(double rad) { lock (_lock) _theta = rad; }
         public double CrankAboveBdcMm { get { lock (_lock) return AmplitudeMm * (1 - Math.Cos(_theta)); } }
         public bool SafetyOk = true;
+        /// <summary>IR thermometer: damper heated by the damping power, cooling to the room. False = no sensor.</summary>
+        public bool IrSensor = true;
+        public double RoomC = 21.5, DamperC = 21.5, DamperHeatJPerK = 400, CoolingTauS = 600;
         /// <summary>Virtual seconds per real second when the internal timer runs.</summary>
         public double TimeScale = 1;
         /// <summary>False: nothing happens until Step() is called (used by the tests).</summary>
@@ -119,6 +122,9 @@ namespace ShockDyno.Core
                     else Ack(id, CommandResult.NotRunning);
                     break;
                 case EventId.MotorStop: StopMotor(); Ack(id, CommandResult.Ok); break;
+                case EventId.ReadTemp:
+                    _out.Add(Packet.BuildTemp(new TempReading { Ok = IrSensor, ObjectC = IrSensor ? DamperC + 0.05 * Gauss() : 0, BodyC = IrSensor ? RoomC + 1 : 0 }));
+                    break;
                 case EventId.ClearFault:
                     if (_state == MachineState.Fault) { _state = MachineState.Idle; _fault = FaultCode.None; }
                     Ack(id, CommandResult.Ok); break;
@@ -174,6 +180,7 @@ namespace ShockDyno.Core
                     double v = AmplitudeMm * w * Math.Sin(_theta);
                     double dyn = DamperForce(v);
                     _dyn = BushingLagS > 0 ? _dyn + (dyn - _dyn) * Math.Min(1, h / BushingLagS) : dyn;
+                    DamperC += h * (Math.Abs(_dyn * v) / 1000 / DamperHeatJPerK - (DamperC - RoomC) / CoolingTauS);   // N x mm/s = mW
                     double force = GasForceN + GasRateNPerMm * xr + _dyn + ForceNoiseN * Gauss();
                     double pos = CenterMm - AmplitudeMm + xr + PosNoiseMm * Gauss();
                     _us += (uint)(1e6 * h);

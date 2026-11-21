@@ -43,6 +43,8 @@ namespace ShockDyno.Core
         public double TargetSpeed;       // mm/s
         public double MotorHz;
         public int CycleCount;
+        /// <summary>Damper temperature at the start of this speed (C), NaN if not measured.</summary>
+        public double TempC = double.NaN;
         public double CompPeakVel, CompForceAtPeakVel, CompMaxForce;
         public double RebPeakVel, RebForceAtPeakVel, RebMaxForce;   // negative values
         public List<ProcessedCycle> Cycles = new List<ProcessedCycle>();

@@ -31,6 +31,7 @@ namespace ShockDyno.App
             public HistoryItem Test;
             public int Step;
             public double SpeedMmS, MotorHz;
+            public double TempC = double.NaN;   // damper temperature at the start of this speed
             public Color? Custom;          // null = same colour as its test
             public bool Visible = true;
             public Color Shown { get { return Custom ?? Test.Shown; } }
@@ -53,7 +54,12 @@ namespace ShockDyno.App
         // controls
         readonly ComboBox _ports = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
         readonly Button _connect = new Button { Text = "Connect", Width = 90, Height = 26 };
-        readonly Label _state = Value(), _safety = Value(), _drive = Value(), _force = Value(), _position = Value();
+        readonly Label _state = Value(), _safety = Value(), _drive = Value(), _force = Value(), _position = Value(), _temp = Value();
+        // IR thermometer: replies come back in order; the first _liveTempPending of them answer the live display
+        int _liveTempPending;
+        DateTime _liveTempAsked = DateTime.MinValue;
+        TempReading? _lastTemp;
+        DateTime _lastTempAt = DateTime.MinValue;
         readonly Button _start = new Button { Text = "START TEST", Width = 144, Height = 46, BackColor = Color.FromArgb(46, 160, 67), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         readonly Button _stop = new Button { Text = "STOP", Width = 144, Height = 46, BackColor = Color.FromArgb(207, 34, 46), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         readonly Button _tare = new Button { Text = "Tare force", Width = 144, Height = 28 };
@@ -142,7 +148,7 @@ namespace ShockDyno.App
             int top = 4;
             foreach (GroupBox g in new[] {
                 Group("Connection", Row(_ports, _connect)),
-                Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position),
+                Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position), Pair("Damper temp.", _temp),
                       Row(_start, _stop), Row(_tare, _clear), Row(_findBdc)),
                 Group("Test", Caption("Name (damper, settings)"), _name, Caption("Notes"), _notes),
                 Group("Sequence", _grid, Row(load, save, def)),
@@ -337,10 +343,12 @@ namespace ShockDyno.App
                     if (_parker != null && !_parker.Done && r != CommandResult.Ok && (id == EventId.MotorRun || id == EventId.MotorSetFreq))
                         _parker.Cancel("motor command refused: " + DynoStatus.Describe(r));
                 });
+                link.TemperatureReceived += t => Ui(() => OnTemperature(link, t));
                 link.Disconnected += reason => Ui(() => { if (link == _link) Disconnect("Connection lost: " + reason); });
                 link.Open();
                 _link = link;
                 _status = null; _acqSeenOn = false;
+                _liveTempPending = 0; _lastTemp = null;
                 _link.StartAcquisition();
                 SendLimits();
                 _set.LastPort = port;
@@ -433,6 +441,35 @@ namespace ShockDyno.App
             }
         }
 
+        void OnTemperature(IDynoLink from, TempReading t)
+        {
+            if (from != _link) return;
+            _lastTemp = t; _lastTempAt = DateTime.Now;
+            if (_liveTempPending > 0) { _liveTempPending--; return; }     // answer to a live-display request
+            if (_runner != null) _runner.OnTemperature(t);
+        }
+
+        /// <summary>Live display: asks for a reading now and then while no test runs (I2C stays quiet during measurements).</summary>
+        void PollTemperature(bool running)
+        {
+            if (_link == null || running || _set.TemperatureRefreshS <= 0) return;
+            double since = (DateTime.Now - _liveTempAsked).TotalSeconds;
+            if (_liveTempPending > 0 && since < 3) return;                // still waiting for the last one
+            if (_liveTempPending > 0) _liveTempPending = 0;               // never answered (firmware without the thermometer)
+            if (since < _set.TemperatureRefreshS) return;
+            _liveTempAsked = DateTime.Now; _liveTempPending++;
+            _link.RequestTemperature();
+        }
+
+        string TempText()
+        {
+            if (_lastTemp == null)
+                return _link != null && (DateTime.Now - _liveTempAsked).TotalSeconds > 2.5 && _liveTempAsked > _lastTempAt && _set.TemperatureRefreshS > 0 ? "no answer (firmware?)" : "-";
+            TempReading t = _lastTemp.Value;
+            if (!t.Ok) return "IR sensor not answering";
+            return string.Format("{0:0.0} °C  (sensor {1:0.0})", t.ObjectC, t.BodyC);
+        }
+
         double[] RawAverage()
         {
             int n = Math.Max(1, _recent.Count);
@@ -472,6 +509,9 @@ namespace ShockDyno.App
                 _position.Text = string.Format("{0:0.00} {1}", Units.Length(_set.PositionMm(r[1]), u), Units.LengthUnit(u));
             }
             else _force.Text = _position.Text = "-";
+            PollTemperature(running);
+            _temp.Text = connected ? TempText() : "-";
+            _temp.ForeColor = _lastTemp != null && _lastTemp.Value.Ok ? Color.Black : Color.Gray;
             bool parking = _parker != null && !_parker.Done;
             _start.Enabled = connected && !running && !parking && _status != null && _status.State != MachineState.Fault;
             _findBdc.Enabled = _start.Enabled;
@@ -812,14 +852,15 @@ namespace ShockDyno.App
                         try
                         {
                             TestRecord head = TestRecord.LoadHeader(path);
+                            if (!double.IsNaN(head.StartTempC)) node.ToolTipText = path + "\nDamper temperature at the start: " + head.StartTempC.ToString("0.0") + " °C";
                             for (int k = 0; k < head.Steps.Count; k++)
                             {
                                 double hz = k < head.StepMotorHz.Count ? head.StepMotorHz[k] : 0;
                                 if (head.Steps[k].Type != StepType.Cycles || hz <= 0) continue;   // warm-up, or skipped
-                                var sp = new SpeedItem { Test = h, Step = k, SpeedMmS = head.Steps[k].SpeedMmS, MotorHz = hz };
+                                var sp = new SpeedItem { Test = h, Step = k, SpeedMmS = head.Steps[k].SpeedMmS, MotorHz = hz, TempC = head.StepTemp(k) };
                                 if (display.TryGetValue(sp.Key, out v)) { if (ParseDisplay(v, out c, out hidden)) sp.Custom = c; sp.Visible = !hidden; }
                                 h.Speeds.Add(sp);
-                                node.Nodes.Add(new TreeNode(SpeedName(sp.SpeedMmS, sp.MotorHz)) { Tag = sp, Checked = sp.Visible });
+                                node.Nodes.Add(new TreeNode(SpeedName(sp.SpeedMmS, sp.MotorHz) + (double.IsNaN(sp.TempC) ? "" : string.Format("  {0:0.0} °C", sp.TempC))) { Tag = sp, Checked = sp.Visible });
                             }
                         }
                         catch (Exception) { /* listed without its speeds */ }

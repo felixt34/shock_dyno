@@ -15,6 +15,10 @@ namespace ShockDyno.Core
         public CalibrationResult Calibration = new CalibrationResult();
         public List<SequenceStep> Steps = new List<SequenceStep>();
         public List<double> StepMotorHz = new List<double>();
+        /// <summary>Damper temperature (IR thermometer, C) at the start of the test and of each step; NaN = not measured.</summary>
+        public double StartTempC = double.NaN;
+        public List<double> StepTempC = new List<double>();
+        public double StepTemp(int k) { return k >= 0 && k < StepTempC.Count ? StepTempC[k] : double.NaN; }
         public List<Sample> Samples = new List<Sample>();
         public List<short> StepOf = new List<short>();    // -1 = calibration cycle
         public List<short> CycleOf = new List<short>();   // 0 = not a measured cycle
@@ -37,6 +41,9 @@ namespace ShockDyno.Core
                 w.WriteLine("# gas_force_N: " + Calibration.GasForceN.ToString("R", Inv));
                 w.WriteLine("# static_slope_N_per_mm: " + Calibration.StaticSlopeNPerMm.ToString("R", Inv));
                 w.WriteLine("# calibration_crank_hz: " + Calibration.CrankHz.ToString("R", Inv));
+                if (!double.IsNaN(StartTempC)) w.WriteLine("# start_temperature_C: " + StartTempC.ToString("0.00", Inv));
+                for (int i = 0; i < Steps.Count; i++)
+                    if (!double.IsNaN(StepTemp(i))) w.WriteLine("# step_temperature_C: " + i + ", " + StepTemp(i).ToString("0.00", Inv));
                 for (int i = 0; i < Steps.Count; i++)
                     w.WriteLine("# step: " + i + ", " + Steps[i] + ", " + (i < StepMotorHz.Count ? StepMotorHz[i] : 0).ToString("0.###", Inv));
                 w.WriteLine("# position and force are as measured: + = compression, static force (preload, gas) NOT removed");
@@ -81,6 +88,16 @@ namespace ShockDyno.Core
                         case "gas_force_N": r.Calibration.GasForceN = D(val); break;
                         case "static_slope_N_per_mm": r.Calibration.StaticSlopeNPerMm = D(val); break;
                         case "calibration_crank_hz": r.Calibration.CrankHz = D(val); break;
+                        case "start_temperature_C": r.StartTempC = D(val); break;
+                        case "step_temperature_C":
+                            string[] tv = val.Split(',');
+                            if (tv.Length >= 2)
+                            {
+                                int k = int.Parse(tv[0].Trim(), Inv);
+                                while (r.StepTempC.Count <= k) r.StepTempC.Add(double.NaN);
+                                r.StepTempC[k] = D(tv[1]);
+                            }
+                            break;
                         case "step":
                             string[] f = val.Split(',');
                             if (f.Length >= 4)
@@ -126,7 +143,11 @@ namespace ShockDyno.Core
             }
             for (int k = 0; k < Steps.Count; k++)
                 if (cycles.ContainsKey(k))
-                    results.Add(Analyzer.Summarize(k, Steps[k].SpeedMmS, k < StepMotorHz.Count ? StepMotorHz[k] : 0, cycles[k]));
+                {
+                    StepResult r = Analyzer.Summarize(k, Steps[k].SpeedMmS, k < StepMotorHz.Count ? StepMotorHz[k] : 0, cycles[k]);
+                    r.TempC = StepTemp(k);
+                    results.Add(r);
+                }
             return results;
         }
 
@@ -173,7 +194,8 @@ namespace ShockDyno.Core
                 w.WriteLine(string.Join(",", new[] {
                     "test", "target_speed_" + su, "motor_frequency_Hz",
                     "compression_peak_velocity_" + su, "compression_force_at_peak_velocity_" + fu, "compression_max_force_" + fu,
-                    "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles", "static_force_removed" }));
+                    "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles", "static_force_removed",
+                    "damper_temperature_at_speed_start_C" }));
                 foreach (var t in tests)
                     foreach (StepResult r in t.Value)
                         w.WriteLine(string.Join(",", new[] {
@@ -186,7 +208,8 @@ namespace ShockDyno.Core
                             Units.Length(r.RebPeakVel, u).ToString("0.###", Inv),
                             Units.Force(r.RebForceAtPeakVel, u).ToString("0.##", Inv),
                             Units.Force(r.RebMaxForce, u).ToString("0.##", Inv),
-                            r.CycleCount.ToString(Inv), staticForceRemoved ? "yes" : "no" }));
+                            r.CycleCount.ToString(Inv), staticForceRemoved ? "yes" : "no",
+                            double.IsNaN(r.TempC) ? "" : r.TempC.ToString("0.0", Inv) }));
             }
         }
 

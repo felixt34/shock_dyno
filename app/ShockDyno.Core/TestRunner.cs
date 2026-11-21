@@ -22,6 +22,9 @@ namespace ShockDyno.Core
         readonly List<double> _stepHz = new List<double>();
         readonly List<ProcessedCycle> _stepCycles = new List<ProcessedCycle>();
         readonly List<double> _stepPeriods = new List<double>();
+        readonly List<double> _stepTemp = new List<double>();
+        readonly Queue<int> _tempFor = new Queue<int>();   // what each pending thermometer reading is for: -1 = test start, else the step
+        double _startTemp = double.NaN;
 
         readonly SampleClock _clock = new SampleClock();
         double _t;
@@ -69,6 +72,9 @@ namespace ShockDyno.Core
             if (IsActive) return;
             _samples.Clear(); _stepOf.Clear(); _cycleOf.Clear(); _stepHz.Clear(); Results.Clear();
             for (int i = 0; i < _seq.Steps.Count; i++) _stepHz.Add(0);
+            _stepTemp.Clear(); for (int i = 0; i < _seq.Steps.Count; i++) _stepTemp.Add(double.NaN);
+            _startTemp = double.NaN; _tempFor.Clear();
+            ReadTemperature(-1);
             _detector = new CycleDetector(_set.CycleHysteresisMm);
             _clock.Reset(); _t = 0; _lastBdc = -1; _speedFactor = 1;
             Calibration = null;
@@ -132,6 +138,27 @@ namespace ShockDyno.Core
                 else if (double.IsNaN(_atSpeedSince)) _atSpeedSince = _t;
             }
             if (Phase == RunPhase.Parking) _parker.OnStatus(st);
+        }
+
+        /// <summary>Asks for one thermometer reading, recorded for the test start (-1) or a step.</summary>
+        void ReadTemperature(int forStep)
+        {
+            _tempFor.Enqueue(forStep);
+            _link.RequestTemperature();
+        }
+
+        /// <summary>Damper temperature at the start of the test (NaN if not measured).</summary>
+        public double StartTempC { get { return _startTemp; } }
+        public double StepTempC(int step) { return step >= 0 && step < _stepTemp.Count ? _stepTemp[step] : double.NaN; }
+
+        /// <summary>Feed every thermometer reading from the link. Readings nobody asked for (live display) are ignored.</summary>
+        public void OnTemperature(TempReading t)
+        {
+            if (_tempFor.Count == 0) return;
+            int k = _tempFor.Dequeue();
+            if (!t.Ok) { Say("    damper temperature: no answer from the IR thermometer"); return; }
+            if (k < 0) _startTemp = t.ObjectC; else if (k < _stepTemp.Count) _stepTemp[k] = t.ObjectC;
+            Say(string.Format("    damper temperature {0:0.0} °C{1}", t.ObjectC, k < 0 ? string.Format(" at the start of the test (sensor body {0:0.0} °C)", t.BodyC) : ""));
         }
 
         public void OnAck(EventId id, CommandResult result)
@@ -254,6 +281,7 @@ namespace ShockDyno.Core
                 mean /= _stepPeriods.Count;
                 _speedFactor = Clamp((1 / mean) / Kinematics.CrankHz(_motorHz, _set), 0.8, 1.2);
                 StepResult r = Analyzer.Summarize(CurrentStep, step.SpeedMmS, _motorHz, new List<ProcessedCycle>(_stepCycles));
+                r.TempC = _stepTemp[CurrentStep];
                 Say(string.Format("    measured: peak speed {0:0.#} / {1:0.#} mm/s (comp / reb); drive {2:0.00} Hz commanded, {3} Hz reported",
                     r.CompPeakVel, -r.RebPeakVel, _motorHz, double.IsNaN(_driveHz) ? "-" : _driveHz.ToString("0.00")));
                 Results.Add(r);
@@ -289,6 +317,7 @@ namespace ShockDyno.Core
                     ? string.Format("Warm-up: {0:0.#} mm/s for {1:0.#} s ({2:0.00} Hz)", step.SpeedMmS, step.Count, hz)
                     : string.Format("{0:0.#} mm/s x {1:0} cycles ({2:0.00} Hz)", step.SpeedMmS, step.Count, hz));
                 Command(hz, false);
+                ReadTemperature(CurrentStep);
                 Raise(Progress);
                 return;
             }
@@ -330,6 +359,7 @@ namespace ShockDyno.Core
             if (Calibration != null) r.Calibration = Calibration;
             r.Steps.AddRange(_seq.Steps);
             r.StepMotorHz.AddRange(_stepHz);
+            r.StartTempC = _startTemp; r.StepTempC.AddRange(_stepTemp);
             r.Samples.AddRange(_samples); r.StepOf.AddRange(_stepOf); r.CycleOf.AddRange(_cycleOf);
             return r;
         }

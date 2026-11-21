@@ -3,7 +3,7 @@
 //
 // Wiring (GY-906 -> ESP32):
 //   VIN -> 3.3 V      GND -> GND      SCL -> GPIO 0      SDA -> GPIO 15
-// GPIO 0 and 15 are the pins planned on the dyno board: both may idle high at power-up.
+// GPIO 0 and 15 are the pins used on the dyno board (the main firmware reads the sensor the same way).
 // (GPIO 34-39 cannot be used: they are inputs only, and I2C must be able to pull SDA low.)
 #include <Arduino.h>
 #include <Wire.h>

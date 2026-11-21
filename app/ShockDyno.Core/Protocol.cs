@@ -8,8 +8,8 @@ namespace ShockDyno.Core
     public enum EventId : byte
     {
         Heartbeat = 0x01, AcqStart = 0x02, AcqStop = 0x03, SetForceLimits = 0x04,
-        MotorRun = 0x05, MotorSetFreq = 0x06, MotorStop = 0x07, ClearFault = 0x08,
-        Status = 0x81, Ack = 0x82,
+        MotorRun = 0x05, MotorSetFreq = 0x06, MotorStop = 0x07, ClearFault = 0x08, ReadTemp = 0x09,
+        Status = 0x81, Ack = 0x82, Temp = 0x83,
     }
 
     public enum MachineState : byte { Idle = 0, Running = 1, Fault = 2 }
@@ -30,6 +30,14 @@ namespace ShockDyno.Core
         public uint TimeUs;
         public int Force;
         public int Position;
+    }
+
+    /// <summary>One IR thermometer reading. Ok is false when the sensor did not answer.</summary>
+    public struct TempReading
+    {
+        public bool Ok;
+        public double ObjectC;   // what the sensor points at: the damper
+        public double BodyC;     // the sensor itself (about the room temperature)
     }
 
     public class DynoStatus
@@ -189,6 +197,21 @@ namespace ShockDyno.Core
                 Dropped = BitConverter.ToUInt16(p, 8),
                 VfdStatus = p[10],
             };
+        }
+
+        public static TempReading? ParseTemp(byte[] p)   // p[0] is the event id
+        {
+            if (p.Length < 6) return null;
+            return new TempReading { Ok = p[1] != 0, ObjectC = BitConverter.ToInt16(p, 2) / 100.0, BodyC = BitConverter.ToInt16(p, 4) / 100.0 };
+        }
+
+        public static byte[] BuildTemp(TempReading t)
+        {
+            var p = new byte[6];
+            p[0] = (byte)EventId.Temp; p[1] = (byte)(t.Ok ? 1 : 0);
+            Buffer.BlockCopy(BitConverter.GetBytes((short)Math.Round(t.ObjectC * 100)), 0, p, 2, 2);
+            Buffer.BlockCopy(BitConverter.GetBytes((short)Math.Round(t.BodyC * 100)), 0, p, 4, 2);
+            return Encode(TypeEvent, p);
         }
 
         public static byte[] BuildStatus(DynoStatus s)
