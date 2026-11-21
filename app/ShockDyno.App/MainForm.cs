@@ -132,14 +132,14 @@ namespace ShockDyno.App
             tools.DropDownItems.Add("Settings...", null, (s, e) => ShowSettings());
             tools.DropDownItems.Add("Sensor calibration...", null, (s, e) => ShowSensorCalibration());
             tools.DropDownItems.Add("Clear tare (show the absolute force)", null, (s, e) => ClearTare());
+            Image logo = LogoImage(22);
+            if (logo != null) menu.Items.Add(new ToolStripLabel { Image = logo, ImageScaling = ToolStripItemImageScaling.None, DisplayStyle = ToolStripItemDisplayStyle.Image, Margin = new Padding(4, 2, 10, 2), ToolTipText = "DynamiX - dynamomètre d'amortisseurs de suspension" });
             menu.Items.Add(file); menu.Items.Add(tools);
 
             var left = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             var load = new Button { Text = "Load...", Width = 92, Height = 26 }; var save = new Button { Text = "Save...", Width = 92, Height = 26 }; var def = new Button { Text = "Default", Width = 92, Height = 26 };
             load.Click += (s, e) => LoadSequenceFile(); save.Click += (s, e) => SaveSequenceFile(); def.Click += (s, e) => LoadSequenceIntoGrid(TestSequence.Default());
             int top = 4;
-            Control logo = LogoBox(312);
-            if (logo != null) { logo.Location = new Point(6, top); left.Controls.Add(logo); top += logo.Height + 4; }
             foreach (GroupBox g in new[] {
                 Group("Connection", Row(_ports, _connect)),
                 Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position),
@@ -261,22 +261,24 @@ namespace ShockDyno.App
             return typeof(MainForm).Assembly.GetManifestResourceStream(name);
         }
 
-        /// <summary>The DynamiX logo, scaled to the given width, for the top of the left column.</summary>
-        static Control LogoBox(int width)
+        /// <summary>The DynamiX logo scaled to the given height (high-quality resize), for the menu bar.</summary>
+        static Image LogoImage(int height)
         {
-            Image logo;
             using (Stream s = Resource("logo.png"))
             {
                 if (s == null) return null;
-                using (var img = Image.FromStream(s)) logo = new Bitmap(img);   // copy, so the stream can close
+                using (var img = Image.FromStream(s))
+                {
+                    var bmp = new Bitmap(img.Width * height / img.Height, height);
+                    using (Graphics g = Graphics.FromImage(bmp))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        g.DrawImage(img, 0, 0, bmp.Width, bmp.Height);
+                    }
+                    return bmp;
+                }
             }
-            int pad = 6;
-            return new PictureBox
-            {
-                Image = logo, SizeMode = PictureBoxSizeMode.Zoom,
-                Width = width, Height = (width - 2 * pad) * logo.Height / logo.Width + 2 * pad,
-                Padding = new Padding(pad)
-            };
         }
 
         static TabPage Page(string title, Control c) { var p = new TabPage(title); p.Controls.Add(c); return p; }
