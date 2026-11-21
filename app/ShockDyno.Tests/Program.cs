@@ -31,6 +31,7 @@ static class Program
         TestAverageCycles();
         TestBushings(0.03);
         TestBushings(0.08);  // slow drive ramp: cycles during the ramp must not count
+        TestTareAndLimit();
         TestSampleClock();
         TestUnplug();
         TestCalibrationFile();
@@ -259,6 +260,19 @@ static class Program
         protected override void OpenTransport() { }
         protected override void CloseTransport() { System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
         protected override void Write(byte[] packet) { if (Hang) System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite); }
+    }
+
+    static void TestTareAndLimit()
+    {
+        Console.WriteLine("Force limit from the absolute zero, not the tare");
+        var set = new Settings { ForceNPerCount = 0.0046, ForceZeroCounts = 1000, ForceLimitN = 3000 };
+        int lo0, hi0; set.ForceLimitCounts(out lo0, out hi0);
+        double raw150 = set.ForceCounts(150);                  // damper installed: 150 N absolute
+        set.ForceTareN = set.ForceAbsoluteN(raw150);             // Tare
+        int lo1, hi1; set.ForceLimitCounts(out lo1, out hi1);
+        Check(lo0 == lo1 && hi0 == hi1, "tare does not move the limits");
+        Check(Math.Abs(set.ForceN(raw150)) < 1e-6 && Math.Abs(set.ForceAbsoluteN(raw150) - 150) < 1e-6, "after tare the force reads 0, the absolute force still 150 N");
+        Check(Math.Abs(set.ForceAbsoluteN(hi1) - 3000) < 0.01, "upper limit is 3000 N absolute (= " + set.ForceN(hi1).ToString("0") + " N after the tare)");
     }
 
     static void TestSampleClock()

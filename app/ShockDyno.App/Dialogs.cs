@@ -51,13 +51,14 @@ namespace ShockDyno.App
             p.Controls.Add(_live);
 
             p.Controls.Add(Header("Force (load cell)"));
-            p.Controls.Add(Note("1. With nothing pushing on the load cell, press Zero.\n2. Apply a known force (for example a known mass x 9.81), enter it in newtons,\n    + for compression and - for tension, then press Set gain."));
+            p.Controls.Add(Note("1. With NOTHING on the load cell (no damper), press Zero: this is the absolute zero,\n    from which the force limit is counted. It also clears the tare.\n2. Apply a known force (for example a known mass x 9.81), enter it in newtons,\n    + for compression and - for tension, then press Set gain."));
             var zero = new Button { Text = "Zero", Width = 90, Height = 28 };
             var gain = new Button { Text = "Set gain", Width = 90, Height = 28 };
             zero.Click += (s, e) =>
             {
                 _set.ForceZeroCounts = _raw()[0]; Changed = true;
-                _set.ForceZeroInfo = Stamp() + "Zero in Sensor calibration"; Changes.Add("force zero");
+                _set.ForceTareN = 0;                                     // the absolute zero also clears the tare
+                _set.ForceZeroInfo = Stamp() + "Zero in Sensor calibration (absolute zero, no load)"; Changes.Add("force zero (absolute)");
             };
             gain.Click += (s, e) =>
             {
@@ -126,8 +127,8 @@ namespace ShockDyno.App
         void Refresh2()
         {
             double[] r = _raw();
-            _live.Text = string.Format("Force    {0,10:0} counts = {1,9:0.0} N\nPosition {2,10:0} counts = {3,9:0.000} mm\nScales: {4:0.#######} N/count, {5:0.#########} mm/count",
-                r[0], _set.ForceN(r[0]), r[1], _set.PositionMm(r[1]), _set.ForceNPerCount, _set.PositionMmPerCount);
+            _live.Text = string.Format("Force    {0,10:0} counts = {1,9:0.0} N absolute\nPosition {2,10:0} counts = {3,9:0.000} mm\nScales: {4:0.#######} N/count, {5:0.#########} mm/count",
+                r[0], _set.ForceAbsoluteN(r[0]), r[1], _set.PositionMm(r[1]), _set.ForceNPerCount, _set.PositionMmPerCount);
         }
 
         static bool Parse(string s, out double v)

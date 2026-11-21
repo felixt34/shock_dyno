@@ -77,6 +77,10 @@ namespace ShockDyno.Core
         public double PositionZeroCounts { get; set; }
         [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the force zero (Tare / Zero) was last set."), ReadOnly(true)]
         public string ForceZeroInfo { get; set; }
+        [SensorCalibration, Category("6. Sensor calibration"), Description("Force subtracted by Tare (N, absolute). Displayed and recorded force = absolute force - this. The force limit does not use it: it is always counted from the absolute zero (ForceZeroCounts), set with Zero in the Sensor calibration window.")]
+        public double ForceTareN { get; set; }
+        [SensorCalibration, Category("6. Sensor calibration"), Description("When the tare was last set."), ReadOnly(true)]
+        public string ForceTareInfo { get; set; }
         [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the force gain was last set."), ReadOnly(true)]
         public string ForceGainInfo { get; set; }
         [SensorCalibration, Category("6. Sensor calibration"), Description("When and how the position calibration was last set."), ReadOnly(true)]
@@ -100,12 +104,19 @@ namespace ShockDyno.Core
             PositionMmPerCount = 4.8447e-5; PositionZeroCounts = 0;
         }
 
-        public double ForceN(double counts) { return (counts - ForceZeroCounts) * ForceNPerCount; }
+        /// <summary>Force relative to the tare: what is displayed and recorded.</summary>
+        public double ForceN(double counts) { return ForceAbsoluteN(counts) - ForceTareN; }
+        /// <summary>Force relative to the absolute zero (no load on the cell), set in the Sensor calibration window.</summary>
+        public double ForceAbsoluteN(double counts) { return (counts - ForceZeroCounts) * ForceNPerCount; }
         public double PositionMm(double counts) { return (counts - PositionZeroCounts) * PositionMmPerCount; }
-        public double ForceCounts(double newtons) { return ForceZeroCounts + newtons / ForceNPerCount; }
+        /// <summary>Raw counts for an absolute force (no tare).</summary>
+        public double ForceCounts(double absoluteNewtons) { return ForceZeroCounts + absoluteNewtons / ForceNPerCount; }
         public double PositionCounts(double mm) { return PositionZeroCounts + mm / PositionMmPerCount; }
 
-        /// <summary>Force limits in raw counts for the ESP32 (lo &lt; hi whatever the sign of the scale).</summary>
+        /// <summary>
+        /// Force limits in raw counts for the ESP32 (lo &lt; hi whatever the sign of the scale): +/- ForceLimitN
+        /// from the ABSOLUTE zero, whatever the tare.
+        /// </summary>
         public void ForceLimitCounts(out int lo, out int hi)
         {
             double a = ForceCounts(-ForceLimitN), b = ForceCounts(ForceLimitN);

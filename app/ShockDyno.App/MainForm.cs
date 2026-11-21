@@ -130,6 +130,7 @@ namespace ShockDyno.App
             var tools = new ToolStripMenuItem("Tools");
             tools.DropDownItems.Add("Settings...", null, (s, e) => ShowSettings());
             tools.DropDownItems.Add("Sensor calibration...", null, (s, e) => ShowSensorCalibration());
+            tools.DropDownItems.Add("Clear tare (show the absolute force)", null, (s, e) => ClearTare());
             menu.Items.Add(file); menu.Items.Add(tools);
 
             var left = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
@@ -686,14 +687,22 @@ namespace ShockDyno.App
             if (_uiTimer.Interval != ms) _uiTimer.Interval = ms;
         }
 
+        /// <summary>Offsets the displayed force to zero. The absolute zero (and so the force limit) does not move.</summary>
         void Tare()
         {
             if (_link == null || _recent.Count < 50) return;
-            _set.ForceZeroCounts = RawAverage()[0];
-            _set.ForceZeroInfo = Stamp() + "Tare";
+            _set.ForceTareN = _set.ForceAbsoluteN(RawAverage()[0]);
+            _set.ForceTareInfo = Stamp() + string.Format(CultureInfo.InvariantCulture, "Tare at {0:0.0} N absolute", _set.ForceTareN);
             SaveSensorCalibration("tare");
-            SendLimits();
-            Say("Force zeroed");
+            Say(string.Format("Force tared: {0:0.0} N absolute now reads 0 (force limit stays +/-{1:0} N from the absolute zero)", _set.ForceTareN, _set.ForceLimitN));
+        }
+
+        void ClearTare()
+        {
+            _set.ForceTareN = 0;
+            _set.ForceTareInfo = Stamp() + "Tare cleared";
+            SaveSensorCalibration("tare cleared");
+            Say("Tare cleared: the force is shown from the absolute zero");
         }
 
         // ------------------------------------------------------------------ sensor calibration file
