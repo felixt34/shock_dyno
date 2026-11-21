@@ -248,7 +248,18 @@ static class Program
         Check(same && back.Notes == "note: with, comma", "CSV saves, reloads and re-analyses to the same results");
         string sum = Path.Combine(Path.GetTempPath(), "dyno_summary.csv");
         TestRecord.ExportSummary(sum, new[] { new KeyValuePair<string, List<StepResult>>(back.Name, again) }, UnitSystem.Imperial);
-        Check(File.ReadAllLines(sum).Length == again.Count + 1, "summary export has one row per speed");
+        string[] sl = File.ReadAllLines(sum);
+        Check(sl.Length == 3 + 1 + again.Count && sl[0] == "\"" + back.Name + "\"" && sl[1].StartsWith("Target Velocity,Compression Velocity") && sl[2] == "in/sec,in/sec,lbf,in/sec,lbf"
+            && sl[3] == "0.00,0.00,0.0,0.00,0.0", "summary CSV: run name, headers, units, zero row, one row per speed");
+        string[] last = sl[sl.Length - 1].Split(',');
+        Check(double.Parse(last[3], System.Globalization.CultureInfo.InvariantCulture) > 0 && double.Parse(last[4], System.Globalization.CultureInfo.InvariantCulture) < 0,
+            "rebound velocity positive, rebound force negative");
+        string xl = Path.Combine(Path.GetTempPath(), "dyno_summary.xlsx");
+        TestRecord.ExportSummary(xl, new[] { new KeyValuePair<string, List<StepResult>>(back.Name, again), new KeyValuePair<string, List<StepResult>>("second run", again) }, UnitSystem.SI);
+        string sheet;
+        using (var z = System.IO.Compression.ZipFile.OpenRead(xl))
+        using (var rd = new StreamReader(z.GetEntry("xl/worksheets/sheet1.xml").Open())) sheet = rd.ReadToEnd();
+        Check(sheet.Contains("<mergeCell ref=\"A1:E1\"/>") && sheet.Contains("second run") && sheet.Contains(">mm/sec<"), "summary .xlsx: merged title per run, both runs");
     }
 
     /// <summary>IR thermometer: read at the start of the test and of every speed, saved, reloaded and exported.</summary>
@@ -275,10 +286,6 @@ static class Program
         List<StepResult> again = back.Analyze(rig.Set);
         Check(Near(back.StartTempC, rig.Runner.StartTempC, 0.001) && again.Count == res.Count && again.Zip(res, (a, b) => Math.Abs(a.TempC - b.TempC) < 0.01).All(x => x),
             "temperatures saved and reloaded");
-        string sum = Path.Combine(Path.GetTempPath(), "dyno_summary_t.csv");
-        TestRecord.ExportSummary(sum, new[] { new KeyValuePair<string, List<StepResult>>(back.Name, again) }, UnitSystem.SI);
-        string[] lines = File.ReadAllLines(sum);
-        Check(lines[0].EndsWith("damper_temperature_at_speed_start_C") && lines[1].Split(',').Last().Length > 0, "summary export has the temperature column");
     }
 
     static double Model(double v, double c1, double knee, double c2)

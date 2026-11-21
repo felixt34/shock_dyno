@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO.Compression;
+using System.Linq;
+using System.Security;
 using System.IO;
 using System.Text;
 
@@ -186,34 +189,154 @@ namespace ShockDyno.Core
         }
 
         /// <summary>Summary export: one row per test speed with peak velocity and force, in the chosen units.</summary>
+        /// <summary>
+        /// Summary table, one block per test (several tests: blocks one under the other with a blank row):
+        ///   run name
+        ///   Target Velocity | Compression Velocity | Compression Force | Rebound Velocity | Rebound Force
+        ///   units
+        ///   0 row, then one row per speed (force at peak velocity; rebound velocity as a positive speed, rebound force signed).
+        /// Written as a formatted Excel file (.xlsx) or as plain CSV, by the file extension.
+        /// </summary>
         public static void ExportSummary(string path, IEnumerable<KeyValuePair<string, List<StepResult>>> tests, UnitSystem u, bool staticForceRemoved = true)
         {
-            string fu = Units.ForceUnit(u), su = Units.SpeedUnit(u).Replace("/", "_per_");
-            using (var w = new StreamWriter(path, false, new UTF8Encoding(false)))
+            var blocks = new List<SummaryBlock>();
+            bool si = u == UnitSystem.SI;
+            string su = si ? "mm/sec" : "in/sec", fu = Units.ForceUnit(u);
+            foreach (var t in tests)
             {
-                w.WriteLine(string.Join(",", new[] {
-                    "test", "target_speed_" + su, "motor_frequency_Hz",
-                    "compression_peak_velocity_" + su, "compression_force_at_peak_velocity_" + fu, "compression_max_force_" + fu,
-                    "rebound_peak_velocity_" + su, "rebound_force_at_peak_velocity_" + fu, "rebound_max_force_" + fu, "cycles", "static_force_removed",
-                    "damper_temperature_at_speed_start_C" }));
-                foreach (var t in tests)
-                    foreach (StepResult r in t.Value)
-                        w.WriteLine(string.Join(",", new[] {
-                            "\"" + t.Key.Replace("\"", "'") + "\"",
-                            Units.Length(r.TargetSpeed, u).ToString("0.###", Inv),
-                            r.MotorHz.ToString("0.00", Inv),
-                            Units.Length(r.CompPeakVel, u).ToString("0.###", Inv),
-                            Units.Force(r.CompForceAtPeakVel, u).ToString("0.##", Inv),
-                            Units.Force(r.CompMaxForce, u).ToString("0.##", Inv),
-                            Units.Length(r.RebPeakVel, u).ToString("0.###", Inv),
-                            Units.Force(r.RebForceAtPeakVel, u).ToString("0.##", Inv),
-                            Units.Force(r.RebMaxForce, u).ToString("0.##", Inv),
-                            r.CycleCount.ToString(Inv), staticForceRemoved ? "yes" : "no",
-                            double.IsNaN(r.TempC) ? "" : r.TempC.ToString("0.0", Inv) }));
+                var b = new SummaryBlock { Title = t.Key, Units = new[] { su, su, fu, su, fu } };
+                b.Rows.Add(new double[5]);
+                foreach (StepResult r in t.Value)
+                    b.Rows.Add(new[] {
+                        Units.Length(r.TargetSpeed, u), Units.Length(r.CompPeakVel, u), Units.Force(r.CompForceAtPeakVel, u),
+                        Units.Length(Math.Abs(r.RebPeakVel), u), Units.Force(r.RebForceAtPeakVel, u) });
+                blocks.Add(b);
             }
+            // SI: whole mm/s and N, as on the reference sheet; imperial: 0.01 in/s and 0.1 lbf
+            string[] fmt = si ? new[] { "0", "0", "0", "0", "0" } : new[] { "0.00", "0.00", "0.0", "0.00", "0.0" };
+            if (string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase)) Xlsx.WriteSummary(path, blocks, fmt);
+            else
+                using (var w = new StreamWriter(path, false, new UTF8Encoding(true)))   // BOM: Excel then shows the ° and accents right
+                {
+                    for (int k = 0; k < blocks.Count; k++)
+                    {
+                        if (k > 0) w.WriteLine();
+                        w.WriteLine(Csv(blocks[k].Title));
+                        w.WriteLine(string.Join(",", SummaryBlock.Headers));
+                        w.WriteLine(string.Join(",", blocks[k].Units));
+                        foreach (double[] row in blocks[k].Rows)
+                            w.WriteLine(string.Join(",", row.Select((v, i) => v.ToString(fmt[i], Inv))));
+                    }
+                }
         }
+
+        static string Csv(string s) { return "\"" + (s ?? "").Replace("\"", "'") + "\""; }
 
         static double D(string s) { return double.Parse(s.Trim(), NumberStyles.Float, Inv); }
         static string OneLine(string s) { return (s ?? "").Replace("\r", " ").Replace("\n", " "); }
+    }
+
+    public class SummaryBlock
+    {
+        public static readonly string[] Headers = { "Target Velocity", "Compression Velocity", "Compression Force", "Rebound Velocity", "Rebound Force" };
+        public string Title;
+        public string[] Units;
+        public List<double[]> Rows = new List<double[]>();
+    }
+
+    /// <summary>Minimal .xlsx writer (one sheet, inline strings, borders, centred cells, merged title) - no extra packages.</summary>
+    static class Xlsx
+    {
+        public static void WriteSummary(string path, List<SummaryBlock> blocks, string[] fmt)
+        {
+            var sheet = new StringBuilder();
+            var merges = new List<string>();
+            int row = 0;
+            Func<int, int, string> refOf = (r, c) => (char)('A' + c) + (r + 1).ToString(CultureInfo.InvariantCulture);
+            foreach (SummaryBlock b in blocks)
+            {
+                if (row > 0) row++;                                   // blank row between tests
+                // title, merged across the 5 columns
+                sheet.Append(RowXml(row, 30, Enumerable.Range(0, 5).Select(c => c == 0 ? Str(refOf(row, c), b.Title, 1) : Empty(refOf(row, c), 1))));
+                merges.Add(refOf(row, 0) + ":" + refOf(row, 4)); row++;
+                sheet.Append(RowXml(row, 36, Enumerable.Range(0, 5).Select(c => Str(refOf(row, c), SummaryBlock.Headers[c], 2)))); row++;
+                sheet.Append(RowXml(row, 0, Enumerable.Range(0, 5).Select(c => Str(refOf(row, c), b.Units[c], 1)))); row++;
+                foreach (double[] r in b.Rows)
+                {
+                    sheet.Append(RowXml(row, 0, Enumerable.Range(0, 5).Select(c => Num(refOf(row, c), Math.Round(r[c], fmt[c].Length > 2 ? fmt[c].Length - 2 : 0), StyleFor(fmt[c])))));
+                    row++;
+                }
+            }
+            string sheetXml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                + "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+                + "<sheetPr><pageSetUpPr fitToPage=\"1\"/></sheetPr>"
+                + "<cols><col min=\"1\" max=\"5\" width=\"20\" customWidth=\"1\"/></cols>"
+                + "<sheetData>" + sheet + "</sheetData>"
+                + (merges.Count > 0 ? "<mergeCells count=\"" + merges.Count + "\">" + string.Concat(merges.Select(m => "<mergeCell ref=\"" + m + "\"/>")) + "</mergeCells>" : "")
+                + "<pageSetup orientation=\"portrait\" fitToWidth=\"1\" fitToHeight=\"0\"/></worksheet>";
+            const string styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                + "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+                + "<numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"0.0\"/></numFmts>"
+                + "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
+                + "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>"
+                + "<borders count=\"2\"><border><left/><right/><top/><bottom/><diagonal/></border>"
+                + "<border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/><diagonal/></border></borders>"
+                + "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
+                + "<cellXfs count=\"6\">"
+                + "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>"
+                + "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf>"
+                + "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" wrapText=\"1\"/></xf>"
+                + "<xf numFmtId=\"1\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyNumberFormat=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\"/></xf>"
+                + "<xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyNumberFormat=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\"/></xf>"
+                + "<xf numFmtId=\"2\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyNumberFormat=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\"/></xf>"
+                + "</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>";
+            if (File.Exists(path)) File.Delete(path);
+            using (ZipArchive z = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                Add(z, "[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                    + "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+                    + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+                    + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+                    + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+                    + "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+                    + "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>"
+                    + "</Types>");
+                Add(z, "_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                    + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                    + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>"
+                    + "</Relationships>");
+                Add(z, "xl/workbook.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                    + "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+                    + "<sheets><sheet name=\"Summary\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+                Add(z, "xl/_rels/workbook.xml.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                    + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+                    + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
+                    + "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
+                    + "</Relationships>");
+                Add(z, "xl/worksheets/sheet1.xml", sheetXml);
+                Add(z, "xl/styles.xml", styles);
+            }
+        }
+
+        static int StyleFor(string fmt) { return fmt == "0" ? 3 : fmt == "0.0" ? 4 : 5; }
+
+        static string RowXml(int r, double height, IEnumerable<string> cells)
+        {
+            return "<row r=\"" + (r + 1) + "\"" + (height > 0 ? " ht=\"" + height.ToString(CultureInfo.InvariantCulture) + "\" customHeight=\"1\"" : "") + ">" + string.Concat(cells) + "</row>";
+        }
+        static string Str(string at, string text, int style)
+        {
+            return "<c r=\"" + at + "\" s=\"" + style + "\" t=\"inlineStr\"><is><t>" + SecurityElement.Escape(text ?? "") + "</t></is></c>";
+        }
+        static string Num(string at, double v, int style)
+        {
+            return "<c r=\"" + at + "\" s=\"" + style + "\"><v>" + v.ToString("R", CultureInfo.InvariantCulture) + "</v></c>";
+        }
+        static string Empty(string at, int style) { return "<c r=\"" + at + "\" s=\"" + style + "\"/>"; }
+
+        static void Add(ZipArchive z, string name, string xml)
+        {
+            using (var w = new StreamWriter(z.CreateEntry(name).Open(), new UTF8Encoding(false))) w.Write(xml);
+        }
     }
 }
