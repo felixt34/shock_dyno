@@ -1,11 +1,67 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Globalization;
 using System.Windows.Forms;
 using ShockDyno.Core;
 
 namespace ShockDyno.App
 {
+    /// <summary>DynamiX logo and Dx icon, built into the program, for every window.</summary>
+    public static class Branding
+    {
+        public static Stream Resource(string name) { return typeof(Branding).Assembly.GetManifestResourceStream(name); }
+
+        static Icon _icon;
+        public static Icon AppIcon
+        {
+            get
+            {
+                if (_icon == null)
+                    using (Stream s = Resource("dx.ico")) if (s != null) _icon = new Icon(s);
+                return _icon;
+            }
+        }
+
+        /// <summary>The logo scaled to the given height (high-quality resize).</summary>
+        public static Image Logo(int height)
+        {
+            using (Stream s = Resource("logo.png"))
+            {
+                if (s == null) return null;
+                using (var img = Image.FromStream(s))
+                {
+                    var bmp = new Bitmap(img.Width * height / img.Height, height);
+                    using (Graphics g = Graphics.FromImage(bmp))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        g.DrawImage(img, 0, 0, bmp.Width, bmp.Height);
+                    }
+                    return bmp;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gives a dialog the Dx icon and a white logo strip across its top. Call after its controls are added:
+        /// docked controls make room by themselves, free-placed ones are moved down and the window made taller.
+        /// </summary>
+        public static void Apply(Form f)
+        {
+            if (AppIcon != null) { f.Icon = AppIcon; f.ShowIcon = true; }
+            Image logo = Logo(26);
+            if (logo == null) return;
+            var strip = new Panel { Dock = DockStyle.Top, Height = 42, BackColor = Color.White };
+            strip.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.CenterImage, Dock = DockStyle.Left, Width = logo.Width + 24 });
+            strip.Paint += (o, e) => e.Graphics.DrawLine(Pens.Gainsboro, 0, strip.Height - 1, strip.Width, strip.Height - 1);
+            foreach (Control c in f.Controls)
+                if (c.Dock == DockStyle.None) c.Top += strip.Height;
+            f.ClientSize = new Size(f.ClientSize.Width, f.ClientSize.Height + strip.Height);
+            f.Controls.Add(strip);
+        }
+    }
+
     /// <summary>All settings in a property grid (descriptions are shown at the bottom).</summary>
     public class SettingsForm : Form
     {
@@ -20,6 +76,7 @@ namespace ShockDyno.App
             Controls.Add(grid);
             Controls.Add(close);
             AcceptButton = close;
+            Branding.Apply(this);
         }
     }
 
@@ -117,6 +174,7 @@ namespace ShockDyno.App
             };
             p.Controls.Add(Row(load, copy));
             Controls.Add(p);
+            Branding.Apply(this);
 
             _timer.Tick += (s, e) => Refresh2();
             _timer.Start();

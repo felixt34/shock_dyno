@@ -95,7 +95,7 @@ namespace ShockDyno.App
             if (selfTest != null) _set = new Settings { DataFolder = Path.Combine(Path.GetTempPath(), "ShockDynoSelfTest") };
             else LoadSensorCalibration();
             Text = "DynamiX shock dyno";
-            using (Stream ico = Resource("dx.ico")) if (ico != null) Icon = new Icon(ico);
+            if (Branding.AppIcon != null) Icon = Branding.AppIcon;
             ClientSize = new Size(1400, 860);
             MinimumSize = new Size(1100, 700);
             StartPosition = FormStartPosition.CenterScreen;
@@ -132,7 +132,7 @@ namespace ShockDyno.App
             tools.DropDownItems.Add("Settings...", null, (s, e) => ShowSettings());
             tools.DropDownItems.Add("Sensor calibration...", null, (s, e) => ShowSensorCalibration());
             tools.DropDownItems.Add("Clear tare (show the absolute force)", null, (s, e) => ClearTare());
-            Image logo = LogoImage(22);
+            Image logo = Branding.Logo(22);
             if (logo != null) menu.Items.Add(new ToolStripLabel { Image = logo, ImageScaling = ToolStripItemImageScaling.None, DisplayStyle = ToolStripItemDisplayStyle.Image, Margin = new Padding(4, 2, 10, 2), ToolTipText = "DynamiX - dynamomètre d'amortisseurs de suspension" });
             menu.Items.Add(file); menu.Items.Add(tools);
 
@@ -254,31 +254,6 @@ namespace ShockDyno.App
             _history.AfterCollapse += (s, e) => { var h = e.Node.Tag as HistoryItem; if (h != null) _expanded.Remove(h.Path); };
             _project.SelectedIndexChanged += (s, e) => { if (!_loadingProjects && _project.SelectedItem is ProjectEntry) SetProject(((ProjectEntry)_project.SelectedItem).Path); };
             FormClosing += (s, e) => Shutdown();
-        }
-
-        static Stream Resource(string name)
-        {
-            return typeof(MainForm).Assembly.GetManifestResourceStream(name);
-        }
-
-        /// <summary>The DynamiX logo scaled to the given height (high-quality resize), for the menu bar.</summary>
-        static Image LogoImage(int height)
-        {
-            using (Stream s = Resource("logo.png"))
-            {
-                if (s == null) return null;
-                using (var img = Image.FromStream(s))
-                {
-                    var bmp = new Bitmap(img.Width * height / img.Height, height);
-                    using (Graphics g = Graphics.FromImage(bmp))
-                    {
-                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                        g.DrawImage(img, 0, 0, bmp.Width, bmp.Height);
-                    }
-                    return bmp;
-                }
-            }
         }
 
         static TabPage Page(string title, Control c) { var p = new TabPage(title); p.Controls.Add(c); return p; }
@@ -1188,6 +1163,7 @@ namespace ShockDyno.App
                 var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(335, 74), Width = 75 };
                 f.Controls.AddRange(new Control[] { l, t, ok, cancel });
                 f.AcceptButton = ok; f.CancelButton = cancel;
+                Branding.Apply(f);
                 return f.ShowDialog(this) == DialogResult.OK ? t.Text : null;
             }
         }
