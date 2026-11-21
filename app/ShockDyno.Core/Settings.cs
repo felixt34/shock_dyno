@@ -56,6 +56,10 @@ namespace ShockDyno.Core
         public double NominalAmplitudeMm { get; set; }
         [Category("3. Test"), Description("Time (ms) from the stop command until the crank has stopped. The stop is sent this much before bottom dead centre. The log after each test says how far from BDC the crank stopped: raise this value if it stops past BDC (rising again), lower it if it stops before.")]
         public double StopLagMs { get; set; }
+        [Category("3. Test"), Description("Motor frequency (Hz) for returning to and finding bottom dead centre. After a test the drive first slows to this frequency, and the crank must have turned steadily at it for ParkSettleS before the stop point is armed, so it cannot overshoot whatever the test speed was.")]
+        public double ParkMotorHz { get; set; }
+        [Category("3. Test"), Description("Time (s) the crank must turn steadily at ParkMotorHz before the stop at bottom dead centre is armed.")]
+        public double ParkSettleS { get; set; }
 
         [Category("4. Safety"), Description("The motor is stopped when the force magnitude exceeds this value (N).")]
         public double ForceLimitN { get; set; }
@@ -98,7 +102,7 @@ namespace ShockDyno.Core
             DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShockDyno");
             LastPort = "";
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
-            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
+            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
             FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200; TemperatureRefreshS = 2;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.

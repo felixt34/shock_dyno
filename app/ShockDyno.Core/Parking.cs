@@ -4,7 +4,9 @@ using System.Collections.Generic;
 namespace ShockDyno.Core
 {
     /// <summary>
-    /// Turns the crank slowly (calibration frequency) and stops it at bottom dead centre.
+    /// Turns the crank slowly (ParkMotorHz) and stops it at bottom dead centre. At the end of a test the drive is
+    /// first slowed to ParkMotorHz; the stop point is only armed once the drive reports that frequency AND the crank
+    /// has turned steadily at the slow speed for ParkSettleS, so a fast test speed cannot carry it past BDC.
     /// If the BDC position is not known yet, it first watches one full stroke to find it.
     /// Feed it every position sample and every status, from the same thread.
     /// </summary>
@@ -18,8 +20,8 @@ namespace ShockDyno.Core
         public bool Done { get; private set; }
         public bool Seeking { get { return !_known; } }
 
-        bool _known, _atSpeed, _approaching, _stopSent;
-        double _bdc, _amp, _crankHz, _margin, _maxMove, _start, _parkStart, _stopTime, _lastMove;
+        bool _known, _atSpeed, _driveSlow, _approaching, _stopSent;
+        double _bdc, _amp, _crankHz, _margin, _maxMove, _start, _parkStart, _stopTime, _lastMove, _slowSince = double.NaN;
         string _note;
 
         // finding BDC: one confirmed minimum, then one confirmed maximum
@@ -38,15 +40,17 @@ namespace ShockDyno.Core
         /// <param name="speedFactor">measured crank speed / nominal (1 if unknown)</param>
         public void Start(double t, bool motorRunning, double bdcMm, double amplitudeMm, double speedFactor)
         {
-            _crankHz = Kinematics.CrankHz(_set.CalibrationMotorHz, _set) * speedFactor;
+            _crankHz = Kinematics.CrankHz(ParkHz, _set) * speedFactor;
             _known = !double.IsNaN(bdcMm);
             if (_known) SetGeometry(bdcMm, amplitudeMm);
             else _det = new CycleDetector(_set.CycleHysteresisMm);
             _start = _parkStart = t;
-            Say(_known ? "Returning to bottom dead centre" : "Finding bottom dead centre (one or two slow turns)");
-            if (motorRunning) _link.MotorSetFreq(_set.CalibrationMotorHz);
-            else _link.MotorRun(_set.CalibrationMotorHz);
+            Say(_known ? string.Format("Returning to bottom dead centre: slowing to {0:0.0#} Hz first", ParkHz) : "Finding bottom dead centre (one or two slow turns)");
+            if (motorRunning) _link.MotorSetFreq(ParkHz);
+            else _link.MotorRun(ParkHz);
         }
+
+        double ParkHz { get { return Math.Max(_set.MinMotorHz, _set.ParkMotorHz > 0 ? _set.ParkMotorHz : _set.CalibrationMotorHz); } }
 
         void SetGeometry(double bdcMm, double amplitudeMm)
         {
@@ -55,13 +59,13 @@ namespace ShockDyno.Core
             // Near BDC the position is A (1 - cos wt): stop this far above BDC so the crank coasts onto it.
             double angle = 2 * Math.PI * _crankHz * Math.Max(0, _set.StopLagMs) / 1000.0;
             _margin = _amp * (1 - Math.Cos(Math.Min(angle, Math.PI / 2)));
-            // Largest position change in 50 ms at the parking speed (x2): faster means the drive is still slowing down.
-            _maxMove = 2 * _amp * 2 * Math.PI * _crankHz * 0.05 + 0.05;
+            // Largest position change in 50 ms at the parking speed (+40 %): faster means the crank is still slowing down.
+            _maxMove = 1.4 * _amp * 2 * Math.PI * _crankHz * 0.05 + 0.05;
         }
 
         public void OnStatus(DynoStatus st)
         {
-            if (!Done && st.VfdOk && st.VfdHz <= 1.25 * _set.CalibrationMotorHz + 0.2) _atSpeed = true;
+            if (!Done && st.VfdOk && st.VfdHz <= ParkHz + 0.15) _driveSlow = true;
         }
 
         /// <summary>Stops the motor and ends (fault, STOP button, refused command).</summary>
@@ -76,12 +80,12 @@ namespace ShockDyno.Core
         public void Feed(double t, double x)
         {
             if (Done) return;
-            if (!_atSpeed && t - _start > 10) _atSpeed = true;    // no drive frequency reported: assume it has slowed down
-            if (!_atSpeed) return;
+            if (!_driveSlow && t - _start > 30) _driveSlow = true;   // no drive frequency reported: rely on the motion check below
             double period = 1 / _crankHz;
 
             if (!_known)
             {
+                if (!_driveSlow) return;
                 if (_seekMode == 0)
                 {
                     _min = Math.Min(_min, x);
@@ -105,9 +109,18 @@ namespace ShockDyno.Core
             _recent.Enqueue(new[] { t, xr });
             while (_recent.Count > 2 && t - _recent.Peek()[0] > 0.05) _recent.Dequeue();
             double moved = xr - _recent.Peek()[1];                // over the last 50 ms
+            bool full = t - _recent.Peek()[0] > 0.04, slow = Math.Abs(moved) < _maxMove;
+            if (!_atSpeed)
+            {
+                // Armed only after the drive is at the parking frequency and the crank has moved no faster than
+                // the parking speed for ParkSettleS without a break.
+                if (!_driveSlow || !full || !slow || double.IsNaN(_slowSince)) { _slowSince = t; return; }
+                if (t - _slowSince < Math.Max(0.2, _set.ParkSettleS)) return;
+                _atSpeed = true; _parkStart = t;
+                Say(string.Format("Crank turning steadily at {0:0.0#} Hz: stopping at the next bottom dead centre", ParkHz));
+            }
             if (!_stopSent)
             {
-                bool full = t - _recent.Peek()[0] > 0.04, slow = Math.Abs(moved) < _maxMove;
                 bool falling = full && slow && moved < -0.01;
                 if (falling && xr < 0.25 * _amp) _approaching = true;
                 if (falling && xr <= _margin) SendStop(t, null);

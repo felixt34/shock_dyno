@@ -211,6 +211,8 @@ static class Program
         Console.WriteLine("Full test, amplitude " + amplitude + " mm, drive ramp " + rampHzPerS + " Hz/s");
         var rig = new Rig(amplitude);
         rig.Sim.RampHzPerS = rampHzPerS;
+        // StopLagMs = how far the crank coasts after STOP, as constant-speed time: 0.25 s braking delay + half the ramp-down from the parking frequency
+        rig.Set.StopLagMs = 1000 * (rig.Sim.StopLagS + 0.5 * rig.Set.ParkMotorHz / rampHzPerS);
         rig.Runner.Start();
         rig.Run(900);
         Check(rig.Success == true, "test completes (" + rig.Message + ")");
