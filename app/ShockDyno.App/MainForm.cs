@@ -1222,12 +1222,21 @@ namespace ShockDyno.App
 
         void ExportSummary()
         {
-            var tests = CheckedRuns().Where(h => h.Results != null && h.Results.Count > 0)
-                .Select(h => new KeyValuePair<string, List<StepResult>>(h.Display, h.Results)).ToList();
+            var runs = CheckedRuns().Where(h => h.Results != null && h.Results.Count > 0).ToList();
+            var tests = runs.Select(h => new KeyValuePair<string, List<StepResult>>(h.Display, h.Results)).ToList();
             if (tests.Count == 0) { MessageBox.Show(this, "Tick at least one test in the history list first.", Text); return; }
-            using (var d = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = "summary.csv" })
+            // Default name: the run's own name + "_summary" (never the run file itself), in the run's folder.
+            var names = runs.Select(h => Path.GetFileNameWithoutExtension(h.Path)).ToList();
+            string name = names.Count == 1 ? names[0] : string.Join("_", names);
+            if (names.Count > 1 && name.Length > 120) name = names[0] + "_and_" + (names.Count - 1) + "_more";
+            using (var d = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = name + "_summary.csv", InitialDirectory = Path.GetDirectoryName(runs[0].Path) })
                 if (d.ShowDialog(this) == DialogResult.OK)
                 {
+                    if (runs.Any(h => string.Equals(Path.GetFullPath(h.Path), Path.GetFullPath(d.FileName), StringComparison.OrdinalIgnoreCase)))
+                    {
+                        MessageBox.Show(this, "That is the run's own data file: choose another name so the measurements are not overwritten.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
                     try { TestRecord.ExportSummary(d.FileName, tests, _set.Units, _set.RemoveStaticForce); Say("Exported " + Path.GetFileName(d.FileName)); }
                     catch (Exception ex) { MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
                 }
