@@ -95,6 +95,7 @@ namespace ShockDyno.App
             if (selfTest != null) _set = new Settings { DataFolder = Path.Combine(Path.GetTempPath(), "ShockDynoSelfTest") };
             else LoadSensorCalibration();
             Text = "DynamiX shock dyno";
+            using (Stream ico = Resource("dx.ico")) if (ico != null) Icon = new Icon(ico);
             ClientSize = new Size(1400, 860);
             MinimumSize = new Size(1100, 700);
             StartPosition = FormStartPosition.CenterScreen;
@@ -235,7 +236,9 @@ namespace ShockDyno.App
 
             var status = new StatusStrip();
             status.Items.Add(_statusText);
-            Controls.Add(root); Controls.Add(status); Controls.Add(menu);
+            Controls.Add(root); Controls.Add(status);
+            Control banner = LogoBanner(); if (banner != null) Controls.Add(banner);
+            Controls.Add(menu);
             MainMenuStrip = menu;
 
             _connect.Click += (s, e) => ToggleConnection();
@@ -250,6 +253,27 @@ namespace ShockDyno.App
             _history.AfterCollapse += (s, e) => { var h = e.Node.Tag as HistoryItem; if (h != null) _expanded.Remove(h.Path); };
             _project.SelectedIndexChanged += (s, e) => { if (!_loadingProjects && _project.SelectedItem is ProjectEntry) SetProject(((ProjectEntry)_project.SelectedItem).Path); };
             FormClosing += (s, e) => Shutdown();
+        }
+
+        static Stream Resource(string name)
+        {
+            return typeof(MainForm).Assembly.GetManifestResourceStream(name);
+        }
+
+        /// <summary>White strip under the menu with the DynamiX logo on the left.</summary>
+        static Control LogoBanner()
+        {
+            Image logo;
+            using (Stream s = Resource("logo.png"))
+            {
+                if (s == null) return null;
+                using (var img = Image.FromStream(s)) logo = new Bitmap(img);   // copy, so the stream can close
+            }
+            var panel = new Panel { Dock = DockStyle.Top, Height = 58, BackColor = Color.White, Padding = new Padding(12, 8, 12, 8) };
+            int h = panel.Height - 16, w = logo.Width * h / logo.Height;
+            panel.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Dock = DockStyle.Left, Width = w });
+            panel.Paint += (o, e) => e.Graphics.DrawLine(Pens.Gainsboro, 0, panel.Height - 1, panel.Width, panel.Height - 1);
+            return panel;
         }
 
         static TabPage Page(string title, Control c) { var p = new TabPage(title); p.Controls.Add(c); return p; }

@@ -14,6 +14,7 @@
     <DebugType>full</DebugType>
     <Optimize Condition=" '$(Configuration)' == 'Release' ">true</Optimize>
     <WarningLevel>4</WarningLevel>
+    <ApplicationIcon>Resources\dx.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DefineConstants>DEBUG;TRACE</DefineConstants>
@@ -33,6 +34,10 @@
     <Compile Include="..\ShockDyno.Core\*.cs">
       <Link>Core\%(Filename)%(Extension)</Link>
     </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\logo.png"><LogicalName>logo.png</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="Resources\dx.ico"><LogicalName>dx.ico</LogicalName></EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
