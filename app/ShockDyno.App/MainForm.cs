@@ -77,7 +77,7 @@ namespace ShockDyno.App
         readonly PlotControl _plotFx = new PlotControl { Dock = DockStyle.Fill }, _plotFv = new PlotControl { Dock = DockStyle.Fill },
                              _plotPeak = new PlotControl { Dock = DockStyle.Fill }, _plotTimeF = new PlotControl { Dock = DockStyle.Fill },
                              _plotTimeX = new PlotControl { Dock = DockStyle.Fill }, _plotTimeV = new PlotControl { Dock = DockStyle.Fill };
-        readonly TreeView _history = new TreeView { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, ShowNodeToolTips = true, ItemHeight = 20 };
+        readonly TreeView _history = new CheckTreeView { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, ShowNodeToolTips = true, ItemHeight = 20 };
         readonly HashSet<string> _expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // tests whose speed list is open
         readonly ImageList _swatches = new ImageList { ImageSize = new Size(14, 14), ColorDepth = ColorDepth.Depth32Bit };
         readonly Dictionary<int, int> _swatchIndex = new Dictionary<int, int>();
@@ -1225,4 +1225,25 @@ namespace ShockDyno.App
             Say("Sensor calibration updated and saved to " + _set.CalibrationPath);
         }
     }
+
+    /// <summary>
+    /// TreeView with a fix for a Windows bug: a fast second click on a check box arrives as a
+    /// double-click, which flips the box on screen without updating Checked or raising AfterCheck,
+    /// so the box and the graphs disagree. A double-click on a check box is handled as a normal click instead.
+    /// </summary>
+    sealed class CheckTreeView : TreeView
+    {
+        const int WM_LBUTTONDOWN = 0x0201, WM_LBUTTONDBLCLK = 0x0203;
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_LBUTTONDBLCLK && CheckBoxes)
+            {
+                int lp = m.LParam.ToInt32();
+                var hit = HitTest(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                if (hit.Location == TreeViewHitTestLocations.StateImage) m.Msg = WM_LBUTTONDOWN;
+            }
+            base.WndProc(ref m);
+        }
+    }
+
 }
