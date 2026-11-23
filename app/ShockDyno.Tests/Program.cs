@@ -39,6 +39,7 @@ static class Program
         TestSafetyTrip();
         TestForceLimit();
         TestSvcReporting();
+        TestFastSequence();
         TestStaticCalibration();
         TestStaticBackDrive();
         TestTemperature(true);
@@ -320,6 +321,25 @@ static class Program
         Check(rig.Runner.Results.Count == measured, string.Format("all {0} measured steps done ({1})", measured, rig.Runner.Results.Count));
         Check(!rig.Log.Any(l => l.Contains("using cycle periods")), "constant speed found from the drive frequency (no fallback)");
         Check(rig.Sim.CrankAboveBdcMm < 1, "parked at BDC (" + rig.Sim.CrankAboveBdcMm.ToString("0.00") + " mm)");
+    }
+
+    /// <summary>Faster settings: no settling cycle, calibration at 3 Hz, shorter holds. Same results.</summary>
+    static void TestFastSequence()
+    {
+        Console.WriteLine("Faster sequence settings");
+        var normal = new Rig(25); normal.Runner.Start(); normal.Run(900);
+        var fast = new Rig(25);
+        fast.Set.SettlingCycles = 0; fast.Set.CalibrationMotorHz = 3; fast.Set.StaticSettleS = 1; fast.Set.StaticAverageS = 0.5;
+        fast.Runner.Start(); fast.Run(900);
+        Check(fast.Success == true && fast.Runner.Results.Count == normal.Runner.Results.Count, "fast test completes with every step (" + fast.Message + ")");
+        double tn = normal.Sim.TimeS, tf = fast.Sim.TimeS;
+        Check(tf < tn - 25, string.Format("faster: {0:0} s instead of {1:0} s", tf, tn));
+        double worst = 0;
+        for (int k = 0; k < normal.Runner.Results.Count; k++)
+            worst = Math.Max(worst, Math.Abs(fast.Runner.Results[k].CompForceAtPeakVel - normal.Runner.Results[k].CompForceAtPeakVel));
+        Check(worst < 3, string.Format("same forces (largest difference {0:0.0} N)", worst));
+        Check(Near(fast.Runner.Calibration.StaticSlopeNPerMm, normal.Runner.Calibration.StaticSlopeNPerMm, 0.03) && Near(fast.Runner.Calibration.GasForceN, normal.Runner.Calibration.GasForceN, 1),
+            string.Format("same static force: slope {0:0.000} / {1:0.000} N/mm, gas {2:0.0} / {3:0.0} N", fast.Runner.Calibration.StaticSlopeNPerMm, normal.Runner.Calibration.StaticSlopeNPerMm, fast.Runner.Calibration.GasForceN, normal.Runner.Calibration.GasForceN));
     }
 
     /// <summary>The shock back-drives the stopped crank: the static values must be refused, the test still run.</summary>

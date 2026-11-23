@@ -45,6 +45,8 @@ namespace ShockDyno.Core
         public double RoomC = 21.5, DamperC = 21.5, DamperHeatJPerK = 400, CoolingTauS = 600;
         /// <summary>Virtual seconds per real second when the internal timer runs.</summary>
         public double TimeScale = 1;
+        /// <summary>Simulated time since opening (s).</summary>
+        public double TimeS { get { return _us / 1e6; } }
         /// <summary>False: nothing happens until Step() is called (used by the tests).</summary>
         public bool RealTime = true;
 

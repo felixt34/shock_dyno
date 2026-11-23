@@ -227,13 +227,17 @@ namespace ShockDyno.Core
             double period = _samples[j].T - _samples[prev].T;
             _fullCyclesSinceCommand++;
             bool nearTarget = Math.Abs(period - _expectedPeriod) / _expectedPeriod < _set.SpeedTolerancePct / 100.0;
-            bool steady = _fullCyclesSinceCommand >= 2 && Math.Abs(period - _prevPeriod) / period < 0.02;
+            int settle = Math.Max(0, _set.SettlingCycles);
+            bool consistent = _fullCyclesSinceCommand >= settle + 1 && _fullCyclesSinceCommand >= 2 && Math.Abs(period - _prevPeriod) / period < 0.02;
+            // No settling cycle: the first full cycle after the drive reports the new speed counts if its period is
+            // on target; a speed that is off target (wrong amplitude or speed factor) falls back on two matching cycles.
+            bool steady = settle == 0 ? nearTarget || consistent : consistent;
             _prevPeriod3 = _prevPeriod2; _prevPeriod2 = _prevPeriod; _prevPeriod = period;   // _prevPeriod is now this cycle
             steady = steady && AtConstantSpeed(_samples[prev].T, period);
 
             if (Phase == RunPhase.Calibrating)
             {
-                if (!steady) return;                           // one settling cycle, then one measured cycle
+                if (!steady) return;                           // settling cycle(s), then one measured cycle
                 Calibration = Analyzer.Calibrate(_samples, prev, j, _set);
                 _speedFactor = Clamp(Calibration.CrankHz / Kinematics.CrankHz(_motorHz, _set), 0.8, 1.2);
                 for (int i = prev; i <= j; i++) _cycleOf[i] = 1;
