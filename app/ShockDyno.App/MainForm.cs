@@ -519,7 +519,10 @@ namespace ShockDyno.App
             if (_tabs.SelectedTab == _liveTab) DrawLiveSignals();
             _stop.Enabled = connected;
             _tare.Enabled = connected && !running && !parking;
-            _clear.Enabled = connected && _status != null && _status.State == MachineState.Fault;
+            // Also when the safety circuit is open: the button sends the drive a fault reset, which re-arms the
+            // safety circuit once the door is closed (no ESP32 fault needs to be latched for that).
+            _clear.Enabled = connected && _status != null && (_status.State == MachineState.Fault || !_status.SafetyOk);
+            _clear.Text = _status != null && !_status.SafetyOk && _status.State != MachineState.Fault ? "Reset safety" : "Clear fault";
             _grid.ReadOnly = running;
         }
 
