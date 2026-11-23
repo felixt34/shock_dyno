@@ -62,6 +62,14 @@ namespace ShockDyno.Core
         public double ParkMotorHz { get; set; }
         [Category("3. Test"), Description("Time (s) the crank must turn steadily at ParkMotorHz before the stop at bottom dead centre is armed.")]
         public double ParkSettleS { get; set; }
+        [Category("3. Test"), Description("Static force measured with the crank stopped: after the calibration cycle the crank is held still at top and then bottom dead centre and the force averaged. The gas force at mid-stroke is the mean of the two (seal friction cancels), so it contains no damping force. The slope still comes from the moving cycle. Off = the moving calibration cycle alone (force at the dead centres while turning).")]
+        public bool StaticCalibration { get; set; }
+        [Category("3. Test"), Description("Static force: time (s) to wait after the crank stops before averaging.")]
+        public double StaticSettleS { get; set; }
+        [Category("3. Test"), Description("Static force: averaging time (s) at each dead centre.")]
+        public double StaticAverageS { get; set; }
+        [Category("3. Test"), Description("Static force: if the crank moves more than this (mm) while the force is averaged, the shock is back-driving it; the static values are then not used (moving-cycle values kept).")]
+        public double StaticCreepLimitMm { get; set; }
 
         [Category("4. Safety"), Description("The motor is stopped when the force magnitude exceeds this value (N).")]
         public double ForceLimitN { get; set; }
@@ -104,7 +112,7 @@ namespace ShockDyno.Core
             DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShockDyno");
             LastPort = "";
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
-            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
+            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; StaticCalibration = true; StaticSettleS = 2; StaticAverageS = 1; StaticCreepLimitMm = 0.3; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
             FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200; TemperatureRefreshS = 2;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.

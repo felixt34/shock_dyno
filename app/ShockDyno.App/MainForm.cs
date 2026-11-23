@@ -675,7 +675,7 @@ namespace ShockDyno.App
             UnitSystem u = _set.Units;
             _amp.Text = string.Format("{0:0.00} {1}", Units.Length(c.AmplitudeMm, u), Units.LengthUnit(u));
             _preload.Text = string.Format("{0:0.0} {1}", Units.Force(c.PreloadN, u), Units.ForceUnit(u));
-            _gas.Text = string.Format("{0:0.0} {1}", Units.Force(c.GasForceN, u), Units.ForceUnit(u));
+            _gas.Text = string.Format("{0:0.0} {1}{2}", Units.Force(c.GasForceN, u), Units.ForceUnit(u), c.Static ? " (static)" : "");
         }
 
         void OnFinished(TestRunner runner, bool ok, string msg)

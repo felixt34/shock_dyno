@@ -21,6 +21,9 @@ namespace ShockDyno.Core
         public double StaticSlopeNPerMm; // static force change per mm of compression (gas spring / spring rate)
         public double DeadCentreSlopeNPerMm; // the same from the dead-centre forces only (for comparison; biased by bushings)
         public double CrankHz;           // measured crank frequency during the calibration cycle
+        public bool Static;              // gas force from the crank held still at the dead centres
+        public double MovingGasForceN = double.NaN;   // what the moving cycle alone gave (for comparison)
+        public double SealFrictionN = double.NaN;     // from the static readings
 
         /// <summary>Static (speed-independent) force at xr mm above bottom dead centre.</summary>
         public double StaticForce(double xr) { return PreloadN + StaticSlopeNPerMm * xr; }
@@ -123,6 +126,27 @@ namespace ShockDyno.Core
         /// result does not depend on how different compression and rebound damping are. Each reading is an
         /// average over a short window centred on the dead centre, which also cancels seal friction.
         /// </summary>
+        /// <summary>
+        /// Replaces the gas force and preload with the static readings (crank held still at TDC and BDC).
+        /// Each reading is brought to mid-stroke with the slope of the moving cycle; their mean is the gas force:
+        /// the stopped seal still holds friction in the direction of the last motion. The crank stops the same way at
+        /// both dead centres (both just before, or both just past), so the two readings hold it in opposite
+        /// directions: it cancels in the mean, and half their difference is the seal friction. If the last motions
+        /// were the same way (one stop short, one past), it does not cancel: SealFrictionN is then NaN and the gas
+        /// force may be off by up to the friction.
+        /// </summary>
+        public static void ApplyStatic(CalibrationResult r, StaticReading top, StaticReading bottom)
+        {
+            double k = r.StaticSlopeNPerMm, a = r.AmplitudeMm;
+            double midTop = top.FN - k * (top.XMm - r.BdcMm - a);
+            double midBottom = bottom.FN - k * (bottom.XMm - r.BdcMm - a);
+            if (double.IsNaN(r.MovingGasForceN)) r.MovingGasForceN = r.GasForceN;
+            r.GasForceN = (midTop + midBottom) / 2;
+            r.SealFrictionN = top.Dir != 0 && top.Dir == -bottom.Dir ? top.Dir * (midTop - midBottom) / 2 : double.NaN;
+            r.PreloadN = r.GasForceN - k * a;
+            r.Static = true;
+        }
+
         public static CalibrationResult Calibrate(IList<Sample> s, int i0, int i1, Settings set)
         {
             ProcessedCycle c = Process(s, i0, i1, set, null);

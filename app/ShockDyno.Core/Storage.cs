@@ -18,6 +18,8 @@ namespace ShockDyno.Core
         public CalibrationResult Calibration = new CalibrationResult();
         public List<SequenceStep> Steps = new List<SequenceStep>();
         public List<double> StepMotorHz = new List<double>();
+        /// <summary>Static force readings (crank held at TDC / BDC), null if not measured.</summary>
+        public StaticReading StaticTop, StaticBottom;
         /// <summary>Damper temperature (IR thermometer, C) at the start of the test and of each step; NaN = not measured.</summary>
         public double StartTempC = double.NaN;
         public List<double> StepTempC = new List<double>();
@@ -44,6 +46,11 @@ namespace ShockDyno.Core
                 w.WriteLine("# gas_force_N: " + Calibration.GasForceN.ToString("R", Inv));
                 w.WriteLine("# static_slope_N_per_mm: " + Calibration.StaticSlopeNPerMm.ToString("R", Inv));
                 w.WriteLine("# calibration_crank_hz: " + Calibration.CrankHz.ToString("R", Inv));
+                if (StaticTop != null && StaticBottom != null)
+                {
+                    w.WriteLine("# static_tdc: " + StaticTop.XMm.ToString("R", Inv) + ", " + StaticTop.FN.ToString("R", Inv) + ", " + StaticTop.CreepMm.ToString("R", Inv) + ", " + StaticTop.Dir);
+                    w.WriteLine("# static_bdc: " + StaticBottom.XMm.ToString("R", Inv) + ", " + StaticBottom.FN.ToString("R", Inv) + ", " + StaticBottom.CreepMm.ToString("R", Inv) + ", " + StaticBottom.Dir);
+                }
                 if (!double.IsNaN(StartTempC)) w.WriteLine("# start_temperature_C: " + StartTempC.ToString("0.00", Inv));
                 for (int i = 0; i < Steps.Count; i++)
                     if (!double.IsNaN(StepTemp(i))) w.WriteLine("# step_temperature_C: " + i + ", " + StepTemp(i).ToString("0.00", Inv));
@@ -91,6 +98,8 @@ namespace ShockDyno.Core
                         case "gas_force_N": r.Calibration.GasForceN = D(val); break;
                         case "static_slope_N_per_mm": r.Calibration.StaticSlopeNPerMm = D(val); break;
                         case "calibration_crank_hz": r.Calibration.CrankHz = D(val); break;
+                        case "static_tdc": r.StaticTop = Reading(val); break;
+                        case "static_bdc": r.StaticBottom = Reading(val); break;
                         case "start_temperature_C": r.StartTempC = D(val); break;
                         case "step_temperature_C":
                             string[] tv = val.Split(',');
@@ -166,7 +175,12 @@ namespace ShockDyno.Core
                 if (StepOf[i] < 0 && CycleOf[i] == 1) { if (i0 < 0) i0 = i; i1 = i; }
                 else if (i0 >= 0) break;
             if (i0 < 0 || i1 - i0 < 50) return;
-            try { Calibration = Analyzer.Calibrate(Samples, i0, i1, set); }
+            try
+            {
+                CalibrationResult c = Analyzer.Calibrate(Samples, i0, i1, set);
+                if (StaticTop != null && StaticBottom != null) Analyzer.ApplyStatic(c, StaticTop, StaticBottom);
+                Calibration = c;
+            }
             catch (Exception) { /* keep the stored values */ }
         }
 
@@ -231,6 +245,13 @@ namespace ShockDyno.Core
         }
 
         static string Csv(string s) { return "\"" + (s ?? "").Replace("\"", "'") + "\""; }
+
+        static StaticReading Reading(string val)
+        {
+            string[] p = val.Split(',');
+            if (p.Length < 2) return null;
+            return new StaticReading { XMm = D(p[0]), FN = D(p[1]), CreepMm = p.Length > 2 ? D(p[2]) : 0, Dir = p.Length > 3 ? Math.Sign((int)D(p[3])) : 0 };
+        }
 
         static double D(string s) { return double.Parse(s.Trim(), NumberStyles.Float, Inv); }
         static string OneLine(string s) { return (s ?? "").Replace("\r", " ").Replace("\n", " "); }

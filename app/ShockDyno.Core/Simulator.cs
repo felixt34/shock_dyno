@@ -21,6 +21,11 @@ namespace ShockDyno.Core
         // machine and damper model (edit freely for experiments)
         public double AmplitudeMm = 25, CenterMm = 100;
         public double GasForceN = 150, GasRateNPerMm = 0.4, FrictionN = 15;
+        /// <summary>Seal friction still held when the crank stops (N), in the direction of the last motion.</summary>
+        public double HeldFrictionN = 0;
+        /// <summary>Motor stopped: the shock turns the crank back towards BDC at this rate x sin(angle) (rad/s); 0 = holds.</summary>
+        public double BackDriveRadPerS = 0;
+        double _lastDir, _fricRefMm;
         public double CompC1 = 4, CompKnee = 40, CompC2 = 1.2;     // N per mm/s below / above the knee speed
         public double RebC1 = 8, RebKnee = 40, RebC2 = 2.5;
         public double ForceNoiseN = 1.5, PosNoiseMm = 0.003;
@@ -175,13 +180,16 @@ namespace ShockDyno.Core
                     double step = RampHzPerS * h;
                     _hz += Math.Max(-step, Math.Min(step, _cmdHz - _hz));
                     double w = 2 * Math.PI * Kinematics.CrankHz(_hz, _set) * (1 - Slip);
+                    if (w == 0 && BackDriveRadPerS > 0) _theta -= BackDriveRadPerS * Math.Sin(_theta) * h;
                     _theta += w * h;
                     double xr = AmplitudeMm * (1 - Math.Cos(_theta));
                     double v = AmplitudeMm * w * Math.Sin(_theta);
                     double dyn = DamperForce(v);
                     _dyn = BushingLagS > 0 ? _dyn + (dyn - _dyn) * Math.Min(1, h / BushingLagS) : dyn;
                     DamperC += h * (Math.Abs(_dyn * v) / 1000 / DamperHeatJPerK - (DamperC - RoomC) / CoolingTauS);   // N x mm/s = mW
-                    double force = GasForceN + GasRateNPerMm * xr + _dyn + ForceNoiseN * Gauss();
+                    // the seal only slips (and its held friction flips) after ~0.1 mm of motion in the new direction
+                    if (Math.Abs(xr - _fricRefMm) > 0.1) { _lastDir = Math.Sign(xr - _fricRefMm); _fricRefMm = xr; }
+                    double force = GasForceN + GasRateNPerMm * xr + _dyn + (w == 0 ? HeldFrictionN * _lastDir : 0) + ForceNoiseN * Gauss();
                     double pos = CenterMm - AmplitudeMm + xr + PosNoiseMm * Gauss();
                     _us += (uint)(1e6 * h);
                     var s = new RawSample

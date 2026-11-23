@@ -38,6 +38,8 @@ static class Program
         TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
+        TestStaticCalibration();
+        TestStaticBackDrive();
         TestTemperature(true);
         TestTemperature(false);
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : _failed + " TEST(S) FAILED");
@@ -260,6 +262,58 @@ static class Program
         using (var z = System.IO.Compression.ZipFile.OpenRead(xl))
         using (var rd = new StreamReader(z.GetEntry("xl/worksheets/sheet1.xml").Open())) sheet = rd.ReadToEnd();
         Check(sheet.Contains("<mergeCell ref=\"A1:E1\"/>") && sheet.Contains("second run") && sheet.Contains(">mm/sec<"), "summary .xlsx: merged title per run, both runs");
+    }
+
+    /// <summary>
+    /// Static force at the dead centres: crank held still at TDC and BDC. Seal friction held by the stopped
+    /// seal (+ at TDC, - at BDC) must cancel in the gas force and come out as the seal friction; the values
+    /// must survive save / reload (the calibration is recomputed from the moving cycle on load).
+    /// </summary>
+    static void TestStaticCalibration()
+    {
+        Console.WriteLine("Static force at the dead centres (crank held still)");
+        var rig = new Rig(25);
+        rig.Sim.HeldFrictionN = 12; rig.Sim.FrictionN = 40; rig.Sim.BushingLagS = 0.02; rig.Sim.ForceNoiseN = 2;
+        rig.Runner.Start();
+        rig.Run(900);
+        Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        CalibrationResult c = rig.Runner.Calibration;
+        double model = rig.Sim.GasForceN + rig.Sim.GasRateNPerMm * 25;
+        Check(c.Static, "static readings used");
+        Check(Near(c.GasForceN, model, 1.0), string.Format("gas force {0:0.0} N (model {1:0.0}; moving cycle gave {2:0.0})", c.GasForceN, model, c.MovingGasForceN));
+        Check(Near(c.PreloadN, rig.Sim.GasForceN, 1.5), string.Format("preload {0:0.0} N (model {1:0})", c.PreloadN, rig.Sim.GasForceN));
+        Check(Near(c.SealFrictionN, 12, 1.5), string.Format("seal friction {0:0.0} N (model 12)", c.SealFrictionN));
+        Check(rig.Log.Any(l => l.Contains("top dead centre")) && rig.Log.Any(l => l.StartsWith("Static: gas force")), "log shows the holds");
+        Check(rig.Runner.Results.Count > 0, "steps measured after the holds");
+        string path = Path.Combine(Path.GetTempPath(), "dyno_static.csv");
+        rig.Runner.BuildRecord("static", "").Save(path);
+        TestRecord back = TestRecord.Load(path);
+        back.Analyze(rig.Set);   // recomputes the calibration
+        Check(back.Calibration.Static && Near(back.Calibration.GasForceN, c.GasForceN, 0.01), "static values kept after reload");
+        // repeatability: same machine, different noise, three runs
+        var gas = new List<double>();
+        for (int k = 0; k < 3; k++)
+        {
+            var r = new Rig(25);
+            r.Sim.HeldFrictionN = 12; r.Sim.FrictionN = 40; r.Sim.BushingLagS = 0.02; r.Sim.ForceNoiseN = 2;
+            r.Sim.SetCrankAngle(0.7 * k);
+            r.Runner.Start(); r.Run(900);
+            gas.Add(r.Runner.Calibration.GasForceN);
+        }
+        Check(gas.Max() - gas.Min() < 1.0, string.Format("three runs agree within {0:0.00} N", gas.Max() - gas.Min()));
+    }
+
+    /// <summary>The shock back-drives the stopped crank: the static values must be refused, the test still run.</summary>
+    static void TestStaticBackDrive()
+    {
+        Console.WriteLine("Static force: crank back-driven by the shock");
+        var rig = new Rig(25);
+        rig.Sim.BackDriveRadPerS = 3;
+        rig.Runner.Start();
+        rig.Run(900);
+        Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        Check(!rig.Runner.Calibration.Static && rig.Log.Any(l => l.StartsWith("Static force not used")), "static values refused, moving-cycle values kept");
+        Check(rig.Runner.Results.Count > 0, "steps measured");
     }
 
     /// <summary>IR thermometer: read at the start of the test and of every speed, saved, reloaded and exported.</summary>

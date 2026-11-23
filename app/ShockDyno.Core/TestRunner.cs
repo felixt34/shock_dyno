@@ -34,6 +34,8 @@ namespace ShockDyno.Core
 
         bool _motorRunning;
         BdcParker _parker;                // return to bottom dead centre after the last step
+        DeadCentreHold _static;           // static force at the dead centres, after the calibration cycle
+        StaticReading _staticTop, _staticBottom;
         double _driveHz = double.NaN;     // last output frequency reported by the drive
         // Constant speed: the drive reports the commanded frequency (its acceleration ramp is over).
         // Only cycles that start after this (plus the polling delay) are measured or used for the speed factor.
@@ -77,7 +79,7 @@ namespace ShockDyno.Core
             ReadTemperature(-1);
             _detector = new CycleDetector(_set.CycleHysteresisMm);
             _clock.Reset(); _t = 0; _lastBdc = -1; _speedFactor = 1;
-            Calibration = null;
+            Calibration = null; _static = null; _staticTop = _staticBottom = null;
             CurrentStep = -1;
             Started = DateTime.Now;
             _motorRunning = false;
@@ -110,6 +112,7 @@ namespace ShockDyno.Core
                 _t = _clock.T;
                 var s = new Sample { T = _t, X = _set.PositionMm(raw[i].Position), F = _set.ForceN(raw[i].Force) };
                 if (Phase == RunPhase.Parking) { _parker.Feed(_t, s.X); if (_parker.Done) Finish(); continue; }   // not part of the record
+                if (_static != null && !_static.Done) { _static.Feed(_t, s.X, s.F); if (_static.Done) EndStatic(); continue; }
                 int index = _samples.Count;
                 _samples.Add(s); _stepOf.Add((short)CurrentStep); _cycleOf.Add(0);
 
@@ -138,6 +141,7 @@ namespace ShockDyno.Core
                 else if (double.IsNaN(_atSpeedSince)) _atSpeedSince = _t;
             }
             if (Phase == RunPhase.Parking) _parker.OnStatus(st);
+            if (_static != null && !_static.Done) _static.OnStatus(st);
         }
 
         /// <summary>Asks for one thermometer reading, recorded for the test start (-1) or a step.</summary>
@@ -228,6 +232,14 @@ namespace ShockDyno.Core
                 for (int i = prev; i <= j; i++) _cycleOf[i] = 1;
                 Say(string.Format("Amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N, static slope {3:0.00} N/mm (dead centres alone: {4:0.00})",
                     Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN, Calibration.StaticSlopeNPerMm, Calibration.DeadCentreSlopeNPerMm));
+                if (_set.StaticCalibration)
+                {
+                    _static = new DeadCentreHold(_link, _set);
+                    _static.Log += Say;
+                    _static.Start(_t, Calibration.BdcMm, Calibration.AmplitudeMm, _speedFactor);
+                    Raise(Progress);
+                    return;
+                }
                 var h = Calibrated; if (h != null) h(Calibration);
                 NextStep();
                 return;
@@ -288,6 +300,26 @@ namespace ShockDyno.Core
                 var hs = StepCompleted; if (hs != null) hs(r);
                 NextStep();
             }
+        }
+
+        /// <summary>Static readings done (or failed): use them, then start the steps from rest.</summary>
+        void EndStatic()
+        {
+            if (_static.Failure == null)
+            {
+                _staticTop = _static.Top; _staticBottom = _static.Bottom;
+                Analyzer.ApplyStatic(Calibration, _staticTop, _staticBottom);
+                Say(string.Format("Static: gas force {0:0} N at mid-stroke (moving cycle gave {1:0} N), preload {2:0} N, seal friction {3}",
+                    Calibration.GasForceN, Calibration.MovingGasForceN, Calibration.PreloadN,
+                    double.IsNaN(Calibration.SealFrictionN) ? "unknown (the crank came to rest moving the same way at both dead centres, so friction may offset the gas force)"
+                                                            : Calibration.SealFrictionN.ToString("0") + " N"));
+            }
+            else Say("Static force not used (" + _static.Failure + "): keeping the moving-cycle values");
+            var h = Calibrated; if (h != null) h(Calibration);
+            // the motor is stopped: the next command starts it, and the cycle detector starts afresh
+            _motorRunning = false;
+            _detector = new CycleDetector(_set.CycleHysteresisMm); _lastBdc = -1;
+            NextStep();
         }
 
         void NextStep()
@@ -360,6 +392,7 @@ namespace ShockDyno.Core
             r.Steps.AddRange(_seq.Steps);
             r.StepMotorHz.AddRange(_stepHz);
             r.StartTempC = _startTemp; r.StepTempC.AddRange(_stepTemp);
+            r.StaticTop = _staticTop; r.StaticBottom = _staticBottom;
             r.Samples.AddRange(_samples); r.StepOf.AddRange(_stepOf); r.CycleOf.AddRange(_cycleOf);
             return r;
         }
