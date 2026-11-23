@@ -20,6 +20,8 @@ namespace ShockDyno.Core
         public string ProjectFolder { get; set; }
         [Category("1. General"), Description("How often the screen is refreshed (ms, 50 to 1000). Changing it helps find whether noise at that rate comes from the PC (ground loop through the USB cable).")]
         public int ScreenRefreshMs { get; set; }
+        [Category("1. General"), Description("Show the run names in the corner of the result graphs. Off by default: the colour squares in the History list say which run is which, and hovering over a trace shows its name.")]
+        public bool ShowGraphLegend { get; set; }
         [Category("1. General"), Description("Damper temperature (IR thermometer) shown in the Machine box: read every this many seconds while no test runs. 0 = only at the start of a test and of each speed. During a test it is only read at those moments.")]
         public double TemperatureRefreshS { get; set; }
         [Browsable(false)]

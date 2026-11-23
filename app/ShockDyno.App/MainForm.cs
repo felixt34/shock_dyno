@@ -890,6 +890,7 @@ namespace ShockDyno.App
                 }
                 catch (Exception ex) { Say("Could not read " + Path.GetFileName(h.Path) + ": " + ex.Message); }
             }
+            foreach (PlotControl p in new[] { _plotFx, _plotFv, _plotPeak, _plotTimeF, _plotTimeX, _plotTimeV }) p.ShowLegend = _set.ShowGraphLegend;
             _plotFx.Series.Clear(); _plotFv.Series.Clear(); _plotPeak.Series.Clear(); _plotTimeF.Series.Clear(); _plotTimeX.Series.Clear(); _plotTimeV.Series.Clear();
             _plotFx.Title = "Force vs position (every measured cycle)";
             bool single = tests.Count == 1;

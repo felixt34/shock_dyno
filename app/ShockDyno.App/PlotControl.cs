@@ -25,6 +25,8 @@ namespace ShockDyno.App
     {
         public readonly List<PlotSeries> Series = new List<PlotSeries>();
         public string Title = "", XLabel = "", YLabel = "";
+        /// <summary>Names drawn in the plot corner. Off: the name still shows when hovering over a trace.</summary>
+        public bool ShowLegend = true;
 
         // view: null = automatic (all data); otherwise the zoomed range
         double[] _view;
@@ -241,7 +243,7 @@ namespace ShockDyno.App
                 float ly = area.Top + 6; int shown = 0;
                 foreach (PlotSeries s in Series)
                 {
-                    if (string.IsNullOrEmpty(s.Name) || shown++ >= 14) continue;
+                    if (!ShowLegend || string.IsNullOrEmpty(s.Name) || shown++ >= 14) continue;
                     SizeF sz = g.MeasureString(s.Name, small);
                     float lx = area.Right - sz.Width - 34;
                     using (var bg = new SolidBrush(Color.FromArgb(215, 255, 255, 255))) g.FillRectangle(bg, lx - 2, ly - 1, sz.Width + 32, sz.Height + 1);
