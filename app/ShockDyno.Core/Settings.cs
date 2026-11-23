@@ -48,6 +48,11 @@ namespace ShockDyno.Core
         public double CalibrationMotorHz { get; set; }
         [Category("3. Test"), Description("A cycle counts as measured when its speed is within this % of the target.")]
         public double SpeedTolerancePct { get; set; }
+        [Category("3. Test"), Description("Drive frequency tolerance (Hz) for 'the drive has reached the commanded speed'. In sensorless vector (SVC) mode the drive adds slip compensation to its reported output frequency, which then moves with the load; this allowance (capped at 30 % of the commanded frequency) stops that from being taken for a ramp. In V/F mode the output frequency equals the command and this hardly matters.")]
+        public double DriveSlipAllowanceHz { get; set; }
+
+        /// <summary>How far the drive's reported output frequency may be from the command and still count as at speed.</summary>
+        public double DriveHzTolerance(double hz) { return 0.05 + 0.005 * Math.Abs(hz) + Math.Min(Math.Max(0, DriveSlipAllowanceHz), 0.3 * Math.Abs(hz)); }
         [Category("3. Test"), Description("Position must reverse by this much (mm) for a dead centre to be detected.")]
         public double CycleHysteresisMm { get; set; }
         [Category("3. Test"), Description("At the end of a completed test, turn the crank slowly (calibration frequency) and stop it at bottom dead centre.")]
@@ -116,7 +121,7 @@ namespace ShockDyno.Core
             DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShockDyno");
             LastPort = "";
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
-            CalibrationMotorHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; StaticCalibration = true; ParkApproachHz = 5; ParkSlowAngleDeg = 100; StaticSettleS = 2; StaticAverageS = 1; StaticCreepLimitMm = 0.3; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
+            CalibrationMotorHz = 1.0; DriveSlipAllowanceHz = 1.0; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; StaticCalibration = true; ParkApproachHz = 5; ParkSlowAngleDeg = 100; StaticSettleS = 2; StaticAverageS = 1; StaticCreepLimitMm = 0.3; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
             FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200; TemperatureRefreshS = 2;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.

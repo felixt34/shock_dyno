@@ -40,6 +40,7 @@ namespace ShockDyno.Core
         // Constant speed: the drive reports the commanded frequency (its acceleration ramp is over).
         // Only cycles that start after this (plus the polling delay) are measured or used for the speed factor.
         double _atSpeedSince = double.NaN;
+        double _prevDriveErr = double.NaN;   // reported - commanded, previous status (to catch the ramp crossing the command between polls)
         bool _driveRefLost;               // the drive never reached the commanded frequency: fall back on cycle periods
         const double DriveReportDelayS = 0.4;
         double _driveHzSettled = double.NaN, _driveHzSettledSince;   // to tell a slow ramp from a drive stuck off target
@@ -135,10 +136,16 @@ namespace ShockDyno.Core
             if (st.VfdOk)
             {
                 _driveHz = st.VfdHz;
-                if (double.IsNaN(_driveHzSettled) || Math.Abs(st.VfdHz - _driveHzSettled) > 0.05) { _driveHzSettled = st.VfdHz; _driveHzSettledSince = _t; }
-                bool there = Math.Abs(st.VfdHz - _motorHz) <= 0.05 + 0.005 * _motorHz;
-                if (!there) _atSpeedSince = double.NaN;
-                else if (double.IsNaN(_atSpeedSince)) _atSpeedSince = _t;
+                double tol = _set.DriveHzTolerance(_motorHz);
+                // "settled" = no longer ramping; SVC slip compensation makes the reported value wobble, so allow half the tolerance
+                if (double.IsNaN(_driveHzSettled) || Math.Abs(st.VfdHz - _driveHzSettled) > Math.Max(0.05, tol / 2)) { _driveHzSettled = st.VfdHz; _driveHzSettledSince = _t; }
+                // The ramp is over the first time the reported frequency reaches the command (within the tolerance,
+                // or crossing it between two polls). It then stays "at speed" until the next command: in SVC mode the
+                // reported value keeps moving with the load (slip compensation), which is not a new ramp.
+                double err = st.VfdHz - _motorHz;
+                bool crossed = !double.IsNaN(_prevDriveErr) && _prevDriveErr != 0 && Math.Sign(err) != Math.Sign(_prevDriveErr);
+                _prevDriveErr = err;
+                if ((Math.Abs(err) <= tol || crossed) && double.IsNaN(_atSpeedSince)) _atSpeedSince = _t;
             }
             if (Phase == RunPhase.Parking) _parker.OnStatus(st);
             if (_static != null && !_static.Done) _static.OnStatus(st);
@@ -362,7 +369,7 @@ namespace ShockDyno.Core
             _commandIndex = _samples.Count;
             _commandTime = _t; _lastProgressTime = _t;
             _fullCyclesSinceCommand = 0; _consistentOffTarget = 0;
-            _atSpeedSince = double.NaN;
+            _atSpeedSince = double.NaN; _prevDriveErr = double.NaN;
             _stepCycles.Clear(); _stepPeriods.Clear();
             if (start || !_motorRunning) _link.MotorRun(hz); else _link.MotorSetFreq(hz);   // the first command starts the motor
             _motorRunning = true;

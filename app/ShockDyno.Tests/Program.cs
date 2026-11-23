@@ -38,6 +38,7 @@ static class Program
         TestFindBdc();
         TestSafetyTrip();
         TestForceLimit();
+        TestSvcReporting();
         TestStaticCalibration();
         TestStaticBackDrive();
         TestTemperature(true);
@@ -301,6 +302,24 @@ static class Program
             gas.Add(r.Runner.Calibration.GasForceN);
         }
         Check(gas.Max() - gas.Min() < 1.0, string.Format("three runs agree within {0:0.00} N", gas.Max() - gas.Min()));
+    }
+
+    /// <summary>
+    /// Sensorless vector mode: the drive's reported output frequency includes slip compensation and moves with
+    /// the load. The test must still find constant speed, measure every step and park.
+    /// </summary>
+    static void TestSvcReporting()
+    {
+        Console.WriteLine("Drive in SVC mode (reported frequency moves with the load)");
+        var rig = new Rig(25);
+        rig.Sim.SvcSlipHzPerKN = 1.5; rig.Sim.FrictionN = 40;
+        rig.Runner.Start();
+        rig.Run(900);
+        Check(rig.Success == true, "test completes (" + rig.Message + ")");
+        int measured = TestSequence.Default().Steps.Count(s => s.Type == StepType.Cycles);
+        Check(rig.Runner.Results.Count == measured, string.Format("all {0} measured steps done ({1})", measured, rig.Runner.Results.Count));
+        Check(!rig.Log.Any(l => l.Contains("using cycle periods")), "constant speed found from the drive frequency (no fallback)");
+        Check(rig.Sim.CrankAboveBdcMm < 1, "parked at BDC (" + rig.Sim.CrankAboveBdcMm.ToString("0.00") + " mm)");
     }
 
     /// <summary>The shock back-drives the stopped crank: the static values must be refused, the test still run.</summary>

@@ -94,8 +94,8 @@ namespace ShockDyno.Core
         public void OnStatus(DynoStatus st)
         {
             if (Done || !st.VfdOk) return;
-            if (_fast) { if (Math.Abs(st.VfdHz - ApproachHz) <= 0.15) _driveFast = true; }
-            else if (st.VfdHz <= ParkHz + 0.15) _driveSlow = true;
+            if (_fast) { if (Math.Abs(st.VfdHz - ApproachHz) <= Math.Max(0.15, _set.DriveHzTolerance(ApproachHz))) _driveFast = true; }
+            else if (st.VfdHz <= ParkHz + Math.Max(0.15, _set.DriveHzTolerance(ParkHz))) _driveSlow = true;
         }
 
         /// <summary>Stops the motor and ends (fault, STOP button, refused command).</summary>

@@ -23,6 +23,8 @@ namespace ShockDyno.Core
         public double GasForceN = 150, GasRateNPerMm = 0.4, FrictionN = 15;
         /// <summary>Seal friction still held when the crank stops (N), in the direction of the last motion.</summary>
         public double HeldFrictionN = 0;
+        /// <summary>SVC-like reporting: the drive adds slip compensation to the reported frequency, this many Hz per kN of damper force.</summary>
+        public double SvcSlipHzPerKN = 0;
         /// <summary>Motor stopped: the shock turns the crank back towards BDC at this rate x sin(angle) (rad/s); 0 = holds.</summary>
         public double BackDriveRadPerS = 0;
         double _lastDir, _fricRefMm;
@@ -210,7 +212,7 @@ namespace ShockDyno.Core
                 _out.Add(Packet.BuildStatus(new DynoStatus
                 {
                     State = _state, Fault = _fault, SafetyOk = SafetyOk, AcqOn = _acqOn, LimitsSet = _limitsSet,
-                    VfdOk = true, AdcOk = true, VfdHz = _hz, VfdStatus = _state == MachineState.Running ? 1 : 3,
+                    VfdOk = true, AdcOk = true, VfdHz = _hz > 0 ? _hz + SvcSlipHzPerKN * Math.Abs(_dyn) / 1000 : 0, VfdStatus = _state == MachineState.Running ? 1 : 3,
                 }));
             }
             Flush();
