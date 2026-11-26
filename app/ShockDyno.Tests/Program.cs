@@ -359,6 +359,15 @@ static class Program
         rig.Runner.Start(); rig.Run(900);
         double fastest = Kinematics.MotorHzForSpeed(20, 12.5, rig.Set);
         Check(rig.Success == true && rig.Runner.Calibration.Static, "test completes with static holds (" + rig.Message + ")");
+        Check(rig.Set.LastAmplitudeMm > 12 && rig.Set.LastAmplitudeMm < 13, "measured amplitude remembered for the next test");
+        // second test with a 3 Hz calibration setting: the calibration cycle must stay at the fastest test speed
+        var rig2 = new Rig(12.5, seq);
+        rig2.Set.CalibrationMotorHz = 3; rig2.Set.LastAmplitudeMm = rig.Set.LastAmplitudeMm;
+        double calMax = 0;
+        rig2.Sim.StatusReceived += st => { if (rig2.Runner.Phase == RunPhase.Calibrating) calMax = Math.Max(calMax, st.VfdHz); };
+        rig2.Runner.Start(); rig2.Run(900);
+        Check(rig2.Success == true && rig2.Log.Any(l => l.Contains("calibration cycle at")) && calMax <= fastest * 1.05 + 0.05,
+            string.Format("calibration cycle limited to the fastest test speed ({0:0.00} Hz, max seen {1:0.00} Hz)", fastest, calMax));
         Check(rig.Log.Any(l => l.Contains("approach limited to")), "log says the approach is limited");
         Check(maxHz <= fastest * 1.05 + 0.05, string.Format("drive never above {0:0.00} Hz outside the steps (max {1:0.00} Hz)", fastest, maxHz));
         Check(rig.Sim.CrankAboveBdcMm < 1, "parked at BDC (" + rig.Sim.CrankAboveBdcMm.ToString("0.00") + " mm)");

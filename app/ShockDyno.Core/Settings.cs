@@ -63,6 +63,8 @@ namespace ShockDyno.Core
         public bool SkipCalibrationCycle { get; set; }
         [Category("3. Test"), Description("Crank amplitude (mm, half stroke) set on the machine. Only used when the calibration cycle is skipped, for the speed of the first step until the amplitude has been measured.")]
         public double NominalAmplitudeMm { get; set; }
+        [Category("3. Test"), Description("Amplitude (mm) measured by the last calibration cycle, updated automatically. Before a new calibration cycle the stroke is not known yet: this is used to keep the calibration cycle no faster than the fastest test speed."), ReadOnly(true)]
+        public double LastAmplitudeMm { get; set; }
         [Category("3. Test"), Description("Time (ms) from the stop command until the crank has stopped. The stop is sent this much before bottom dead centre. The log after each test says how far from BDC the crank stopped: raise this value if it stops past BDC (rising again), lower it if it stops before.")]
         public double StopLagMs { get; set; }
         [Category("3. Test"), Description("Motor frequency (Hz) for returning to and finding bottom dead centre. After a test the drive first slows to this frequency, and the crank must have turned steadily at it for ParkSettleS before the stop point is armed, so it cannot overshoot whatever the test speed was.")]

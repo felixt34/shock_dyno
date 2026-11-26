@@ -93,7 +93,15 @@ namespace ShockDyno.Core
             }
             Phase = RunPhase.Calibrating;
             Say("Calibration cycle: measuring amplitude, preload and gas force");
-            Command(_set.CalibrationMotorHz, true);
+            // Never faster than the fastest speed of the test. The stroke is not measured yet: the last measured one
+            // (or the nominal one) is used.
+            double calHz = _set.CalibrationMotorHz, fastest = FastestStepHz(false);
+            if (fastest < calHz)
+            {
+                calHz = Math.Max(_set.MinMotorHz, fastest);
+                Say(string.Format("    calibration cycle at {0:0.0#} Hz, the fastest speed of this test (for a {1:0.#} mm stroke)", calHz, 2 * AssumedAmplitude));
+            }
+            Command(calHz, true);
             Raise(Progress);
         }
 
@@ -243,6 +251,7 @@ namespace ShockDyno.Core
                 for (int i = prev; i <= j; i++) _cycleOf[i] = 1;
                 Say(string.Format("Amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N, static slope {3:0.00} N/mm (dead centres alone: {4:0.00})",
                     Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN, Calibration.StaticSlopeNPerMm, Calibration.DeadCentreSlopeNPerMm));
+                _set.LastAmplitudeMm = Calibration.AmplitudeMm;
                 double stroke = 2 * Calibration.AmplitudeMm, listed;
                 bool? byStroke = _set.StaticForStroke(stroke, out listed);
                 bool useStatic = _set.StaticCalibration && byStroke == true;
@@ -324,14 +333,18 @@ namespace ShockDyno.Core
         /// Highest motor frequency of the sequence (warm-up and measured steps): the dead-centre approach never turns
         /// the crank faster than the test itself (small strokes, fragile dampers). Never below the parking frequency.
         /// </summary>
-        double FastestStepHz()
+        double FastestStepHz(bool atLeastParkHz = true)
         {
-            double amp = Calibration != null ? Calibration.AmplitudeMm : _set.NominalAmplitudeMm;
+            double amp = Calibration != null ? Calibration.AmplitudeMm : AssumedAmplitude;
             double hz = 0;
             foreach (SequenceStep s in _seq.Steps)
                 hz = Math.Max(hz, Kinematics.MotorHzForSpeed(s.SpeedMmS, amp, _set) / _speedFactor);
-            return hz > 0 ? Math.Max(hz, _set.ParkMotorHz) : double.PositiveInfinity;
+            if (hz <= 0) return double.PositiveInfinity;
+            return atLeastParkHz ? Math.Max(hz, _set.ParkMotorHz) : hz;
         }
+
+        /// <summary>Amplitude before the calibration cycle has measured it: the last measured one, else the nominal one.</summary>
+        double AssumedAmplitude { get { return _set.LastAmplitudeMm > 0 ? _set.LastAmplitudeMm : _set.NominalAmplitudeMm; } }
 
         /// <summary>Static readings done (or failed): use them, then start the steps from rest.</summary>
         void EndStatic()
