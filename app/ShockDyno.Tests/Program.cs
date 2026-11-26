@@ -40,6 +40,7 @@ static class Program
         TestForceLimit();
         TestSvcReporting();
         TestFastSequence();
+        TestCalibrationByStroke();
         TestStaticCalibration();
         TestStaticBackDrive();
         TestTemperature(true);
@@ -275,6 +276,7 @@ static class Program
     {
         Console.WriteLine("Static force at the dead centres (crank held still)");
         var rig = new Rig(25);
+        rig.Set.CalibrationByStroke = "50:static";
         rig.Sim.HeldFrictionN = 12; rig.Sim.FrictionN = 40; rig.Sim.BushingLagS = 0.02; rig.Sim.ForceNoiseN = 2;
         rig.Runner.Start();
         rig.Run(900);
@@ -297,6 +299,7 @@ static class Program
         for (int k = 0; k < 3; k++)
         {
             var r = new Rig(25);
+            r.Set.CalibrationByStroke = "50:static";
             r.Sim.HeldFrictionN = 12; r.Sim.FrictionN = 40; r.Sim.BushingLagS = 0.02; r.Sim.ForceNoiseN = 2;
             r.Sim.SetCrankAngle(0.7 * k);
             r.Runner.Start(); r.Run(900);
@@ -342,11 +345,33 @@ static class Program
             string.Format("same static force: slope {0:0.000} / {1:0.000} N/mm, gas {2:0.0} / {3:0.0} N", fast.Runner.Calibration.StaticSlopeNPerMm, normal.Runner.Calibration.StaticSlopeNPerMm, fast.Runner.Calibration.GasForceN, normal.Runner.Calibration.GasForceN));
     }
 
+    /// <summary>Static or dynamic calibration chosen from the measured stroke (list + tolerance).</summary>
+    static void TestCalibrationByStroke()
+    {
+        Console.WriteLine("Calibration type chosen from the stroke");
+        var set = new Settings();
+        double m;
+        Check(set.StaticForStroke(25.8, out m) == true && m == 25, "25.8 mm -> 25 mm, static");
+        Check(set.StaticForStroke(5.6, out m) == true && m == 5, "5.6 mm -> 5 mm, static (1.5 mm minimum tolerance)");
+        Check(set.StaticForStroke(47, out m) == false && m == 50, "47 mm -> 50 mm, dynamic");
+        Check(set.StaticForStroke(148, out m) == false && m == 150, "148 mm -> 150 mm, dynamic");
+        Check(set.StaticForStroke(37, out m) == null, "37 mm -> not in the list");
+        foreach (double amp in new[] { 12.5, 25.0 })
+        {
+            var rig = new Rig(amp);
+            rig.Runner.Start(); rig.Run(900);
+            bool expectStatic = amp == 12.5;
+            Check(rig.Success == true && rig.Runner.Calibration.Static == expectStatic,
+                string.Format("{0:0} mm stroke: {1} calibration ({2})", 2 * amp, expectStatic ? "static" : "dynamic", rig.Message));
+        }
+    }
+
     /// <summary>The shock back-drives the stopped crank: the static values must be refused, the test still run.</summary>
     static void TestStaticBackDrive()
     {
         Console.WriteLine("Static force: crank back-driven by the shock");
         var rig = new Rig(25);
+        rig.Set.CalibrationByStroke = "50:static";
         rig.Sim.BackDriveRadPerS = 3;
         rig.Runner.Start();
         rig.Run(900);

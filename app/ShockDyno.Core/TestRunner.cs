@@ -243,7 +243,14 @@ namespace ShockDyno.Core
                 for (int i = prev; i <= j; i++) _cycleOf[i] = 1;
                 Say(string.Format("Amplitude {0:0.0} mm, preload {1:0} N, gas force {2:0} N, static slope {3:0.00} N/mm (dead centres alone: {4:0.00})",
                     Calibration.AmplitudeMm, Calibration.PreloadN, Calibration.GasForceN, Calibration.StaticSlopeNPerMm, Calibration.DeadCentreSlopeNPerMm));
-                if (_set.StaticCalibration)
+                double stroke = 2 * Calibration.AmplitudeMm, listed;
+                bool? byStroke = _set.StaticForStroke(stroke, out listed);
+                bool useStatic = _set.StaticCalibration && byStroke == true;
+                Say(byStroke == null
+                    ? string.Format("Stroke {0:0.0} mm: not in the calibration list (CalibrationByStroke): dynamic calibration", stroke)
+                    : string.Format("Stroke {0:0.0} mm ({1:0.#} mm stroke): {2} calibration{3}", stroke, listed, byStroke == true ? "static" : "dynamic",
+                                    byStroke == true && !_set.StaticCalibration ? " listed, but static calibration is switched off: dynamic" : ""));
+                if (useStatic)
                 {
                     _static = new DeadCentreHold(_link, _set);
                     _static.Log += Say;

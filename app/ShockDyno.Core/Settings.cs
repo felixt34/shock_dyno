@@ -69,8 +69,33 @@ namespace ShockDyno.Core
         public double ParkMotorHz { get; set; }
         [Category("3. Test"), Description("Time (s) the crank must turn steadily at ParkMotorHz before the stop at bottom dead centre is armed.")]
         public double ParkSettleS { get; set; }
-        [Category("3. Test"), Description("Static force measured with the crank stopped: after the calibration cycle the crank is held still at top and then bottom dead centre and the force averaged. The gas force at mid-stroke is the mean of the two (seal friction cancels), so it contains no damping force. The slope still comes from the moving cycle. Off = the moving calibration cycle alone (force at the dead centres while turning).")]
+        [Category("3. Test"), Description("Static force measured with the crank stopped: after the calibration cycle the crank is held still at top and then bottom dead centre and the force averaged. The gas force at mid-stroke is the mean of the two (seal friction cancels), so it contains no damping force. The slope still comes from the moving cycle. Used only for the strokes marked 'static' in CalibrationByStroke. Off = always the moving (dynamic) calibration.")]
         public bool StaticCalibration { get; set; }
+        [Category("3. Test"), Description("Calibration type for each dyno stroke (mm, 2 x amplitude), chosen from the stroke measured in the calibration cycle: 'stroke:static' or 'stroke:dynamic', separated by commas. A measured stroke that matches none of them (within StrokeTolerancePct) gets the dynamic calibration.")]
+        public string CalibrationByStroke { get; set; }
+        [Category("3. Test"), Description("Tolerance (%) when matching the measured stroke to CalibrationByStroke (at least 1.5 mm).")]
+        public double StrokeTolerancePct { get; set; }
+
+        /// <summary>
+        /// Calibration type listed for this measured stroke: true = static, false = dynamic, null = no stroke in the
+        /// list within the tolerance (matched = the listed stroke, NaN if none).
+        /// </summary>
+        public bool? StaticForStroke(double strokeMm, out double matched)
+        {
+            matched = double.NaN;
+            bool? result = null; double best = double.MaxValue;
+            foreach (string item in (CalibrationByStroke ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] kv = item.Split(':');
+                double s;
+                if (kv.Length != 2 || !double.TryParse(kv[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out s) || s <= 0) continue;
+                string type = kv[1].Trim().ToLowerInvariant();
+                if (type != "static" && type != "dynamic") continue;
+                double d = Math.Abs(strokeMm - s), tol = Math.Max(1.5, s * StrokeTolerancePct / 100);
+                if (d <= tol && d < best) { best = d; matched = s; result = type == "static"; }
+            }
+            return result;
+        }
         [Category("3. Test"), Description("Two-speed approach to a dead centre: turn at this motor frequency (Hz) for most of the turn, then drop to ParkMotorHz for the last part (ParkSlowAngleDeg) and stop from there. Saves up to a slow crank turn (about 10 s at 1 Hz). 0 = the whole way at ParkMotorHz.")]
         public double ParkApproachHz { get; set; }
         [Category("3. Test"), Description("Two-speed approach: crank angle (degrees) before the dead centre where the speed drops to ParkMotorHz. It must leave time to slow down and turn steadily for ParkSettleS; if not, the crank goes round once more at the slow speed.")]
@@ -123,7 +148,8 @@ namespace ShockDyno.Core
             DataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ShockDyno");
             LastPort = "";
             BeltRatio = 5; MotorRatedRpm = 1750; MotorRatedHz = 60; MinMotorHz = 0.5; MaxMotorHz = 60;
-            CalibrationMotorHz = 1.0; DriveSlipAllowanceHz = 1.0; SettlingCycles = 1; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; StaticCalibration = true; ParkApproachHz = 5; ParkSlowAngleDeg = 100; StaticSettleS = 2; StaticAverageS = 1; StaticCreepLimitMm = 0.3; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
+            CalibrationMotorHz = 1.0; DriveSlipAllowanceHz = 1.0; SettlingCycles = 1; SpeedTolerancePct = 4; CycleHysteresisMm = 2; ReturnToBdc = true; StopLagMs = 300; ParkMotorHz = 1.0; ParkSettleS = 1.0; StaticCalibration = true; StrokeTolerancePct = 10;
+            CalibrationByStroke = "5:static, 25:static, 50:dynamic, 75:dynamic, 100:dynamic, 125:dynamic, 150:dynamic"; ParkApproachHz = 5; ParkSlowAngleDeg = 100; StaticSettleS = 2; StaticAverageS = 1; StaticCreepLimitMm = 0.3; SkipCalibrationCycle = false; NominalAmplitudeMm = 25;
             ForceLimitN = 3000;
             FilterCutoffHz = 40; LvitDelayMs = 0; AbsoluteSpeed = true; RemoveStaticForce = true; ScreenRefreshMs = 200; TemperatureRefreshS = 2;
             // Theoretical values: 500 kg / 2 mV/V cell on 5 V, PGA 64;  203.2 mm / 10 V LVIT through a /4 divider, PGA 1.
