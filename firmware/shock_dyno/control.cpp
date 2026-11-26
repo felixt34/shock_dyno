@@ -43,6 +43,16 @@ void taskMain(void*) {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));     // woken early by tripFault() or a command
     supervise();
 
+    // PC gone for PC_LOST_DRIVE_OFF_MS: once the drive has confirmed the stop, go silent on RS-485 so the
+    // drive's communication timeout puts it in fault (it cannot be restarted until the application is back).
+    if ((int32_t)(millis() - sh.lastPcMs) > PC_LOST_DRIVE_OFF_MS && !sentRun && !sh.stopPending && !sh.runRequested) {
+      sh.drivePaused = true;
+      sh.vfdOk = false;
+      sentFreq = 0xFFFF;
+      continue;
+    }
+    sh.drivePaused = false;
+
     bool wantRun = sh.runRequested && sh.state == proto::ST_RUNNING;
     if (!wantRun) {
       if (sentRun || sh.stopPending) {               // retried every pass until the drive confirms

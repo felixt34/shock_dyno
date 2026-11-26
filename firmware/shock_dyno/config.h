@@ -93,6 +93,11 @@
 
 // ---------- Supervision ----------
 #define HEARTBEAT_TIMEOUT_MS  500       // motor stops if the PC is silent this long
+// PC silent this long (application closed, crashed or frozen, cable unplugged): after the stop is confirmed the
+// ESP32 stops talking to the drive altogether, so the drive's own communication timeout (P14 group) trips it into
+// a fault, as when the ESP32 loses power. Communication resumes when the application is back; clear the drive
+// fault with "Clear fault". Longer than HEARTBEAT_TIMEOUT_MS so a short UI freeze while idle does not trip the drive.
+#define PC_LOST_DRIVE_OFF_MS  3000
 #define ADC_TIMEOUT_MS        100       // motor stops if samples stop arriving
 #define FORCE_LIMIT_SAMPLES   3         // consecutive samples beyond the limit before tripping
 #define VFD_COMM_FAIL_LIMIT   5         // consecutive Modbus failures before "VFD comm lost"

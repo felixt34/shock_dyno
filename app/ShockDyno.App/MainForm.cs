@@ -369,6 +369,7 @@ namespace ShockDyno.App
                 SendLimits();
                 _set.LastPort = port;
                 Say("Connected to " + port);
+                if (port != SimulatorPort) Say("If the drive shows a communication fault (the application was closed or the cable unplugged), press Clear fault");
             }
             catch (Exception ex)
             {
@@ -574,7 +575,9 @@ namespace ShockDyno.App
             _tare.Enabled = connected && !running && !parking;
             // Also when the safety circuit is open: the button sends the drive a fault reset, which re-arms the
             // safety circuit once the door is closed (no ESP32 fault needs to be latched for that).
-            _clear.Enabled = connected && _status != null && (_status.State == MachineState.Fault || !_status.SafetyOk);
+            // And whenever the machine is idle: after the application was closed the drive sits in a communication
+            // fault (the ESP32 goes silent on RS-485 when the PC is gone), which the ESP32 may not be able to report.
+            _clear.Enabled = connected && _status != null && (_status.State == MachineState.Fault || !_status.SafetyOk || (!running && !parking));
             _clear.Text = _status != null && !_status.SafetyOk && _status.State != MachineState.Fault ? "Reset safety" : "Clear fault";
             _grid.ReadOnly = running;
         }
