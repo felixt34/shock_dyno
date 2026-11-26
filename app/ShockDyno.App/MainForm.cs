@@ -917,6 +917,13 @@ namespace ShockDyno.App
             Dictionary<string, string> display = LoadRunDisplay();
             _loadingHistory = true;
             _history.BeginUpdate();
+            // keep the colours of the tests shown now, so a reload (e.g. after a new test is saved) does not repaint them
+            var keepColour = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase);
+            foreach (TreeNode old in _history.Nodes)
+            {
+                var oh = (HistoryItem)old.Tag;
+                if (!oh.Shown.IsEmpty) keepColour[oh.Path] = oh.Shown;
+            }
             _history.Nodes.Clear();
             try
             {
@@ -926,6 +933,7 @@ namespace ShockDyno.App
                         if (!TestRecord.IsTestFile(path)) continue;          // summaries, calibration history, other CSV files
                         string name = Path.GetFileNameWithoutExtension(path);
                         var h = new HistoryItem { Path = path, Display = name };
+                        Color kept; if (keepColour.TryGetValue(path, out kept)) h.Shown = kept;
                         string v; Color c; bool hidden;
                         if (display.TryGetValue(Path.GetFileName(path), out v) && ParseDisplay(v, out c, out hidden)) h.Custom = c;
                         var node = new TreeNode(name) { Tag = h, Checked = wasChecked.Contains(path), ToolTipText = path };
@@ -1085,18 +1093,36 @@ namespace ShockDyno.App
             RefreshAnalysis();
         }
 
-        /// <summary>Chosen colours first; the other shown tests get palette colours not already taken, in list order.</summary>
+        /// <summary>
+        /// Chosen colours first; tests that were already shown keep their colour; newly shown tests get the first
+        /// palette colours not already taken, in list order.
+        /// </summary>
         void AssignColours(List<HistoryItem> shown)
         {
             var used = new HashSet<int>(shown.Where(h => h.Custom.HasValue).Select(h => h.Custom.Value.ToArgb()));
-            int k = 0;
+            var todo = new List<HistoryItem>();
             foreach (HistoryItem h in shown)
             {
-                if (h.Custom.HasValue) { h.Shown = h.Custom.Value; continue; }
-                Color c = PlotControl.Palette[k % PlotControl.Palette.Length];
-                for (int tries = 0; tries < PlotControl.Palette.Length && used.Contains(c.ToArgb()); tries++)
-                    c = PlotControl.Palette[++k % PlotControl.Palette.Length];
+                if (h.Custom.HasValue) h.Shown = h.Custom.Value;
+                else if (!h.Shown.IsEmpty && used.Add(h.Shown.ToArgb())) { }      // already shown: keep its colour
+                else todo.Add(h);
+            }
+            int k = 0;
+            foreach (HistoryItem h in todo)
+            {
+                Color c = Color.Empty;
+                for (int tries = 0; tries < PlotControl.Palette.Length; tries++, k++)
+                {
+                    Color p = PlotControl.Palette[k % PlotControl.Palette.Length];
+                    if (!used.Contains(p.ToArgb())) { c = p; break; }
+                }
+                if (c.IsEmpty) c = PlotControl.Palette[k % PlotControl.Palette.Length];   // more tests than colours
                 h.Shown = c; used.Add(c.ToArgb()); k++;
+            }
+            foreach (TreeNode n in _history.Nodes)                                // hidden tests forget their colour
+            {
+                var h = (HistoryItem)n.Tag;
+                if (!shown.Contains(h)) h.Shown = Color.Empty;
             }
             var shownSet = new HashSet<HistoryItem>(shown);
             foreach (TreeNode n in _history.Nodes)
