@@ -41,6 +41,7 @@ static class Program
         TestSvcReporting();
         TestFastSequence();
         TestCalibrationByStroke();
+        TestSlowSequenceApproach();
         TestStaticCalibration();
         TestStaticBackDrive();
         TestTemperature(true);
@@ -122,11 +123,11 @@ static class Program
         public bool? Success; public string Message;
         public List<string> Log = new List<string>();
 
-        public Rig(double amplitude)
+        public Rig(double amplitude, TestSequence seq = null)
         {
             Set.ForceZeroCounts = 1234; Set.PositionZeroCounts = -5000;
             Sim = new SimulatedDynoLink(Set) { RealTime = false, AmplitudeMm = amplitude };
-            Runner = new TestRunner(Sim, Set, TestSequence.Default());
+            Runner = new TestRunner(Sim, Set, seq ?? TestSequence.Default());
             Sim.SamplesReceived += Runner.OnSamples;
             Sim.StatusReceived += Runner.OnStatus;
             Sim.AckReceived += Runner.OnAck;
@@ -343,6 +344,24 @@ static class Program
         Check(worst < 3, string.Format("same forces (largest difference {0:0.0} N)", worst));
         Check(Near(fast.Runner.Calibration.StaticSlopeNPerMm, normal.Runner.Calibration.StaticSlopeNPerMm, 0.03) && Near(fast.Runner.Calibration.GasForceN, normal.Runner.Calibration.GasForceN, 1),
             string.Format("same static force: slope {0:0.000} / {1:0.000} N/mm, gas {2:0.0} / {3:0.0} N", fast.Runner.Calibration.StaticSlopeNPerMm, normal.Runner.Calibration.StaticSlopeNPerMm, fast.Runner.Calibration.GasForceN, normal.Runner.Calibration.GasForceN));
+    }
+
+    /// <summary>Only slow speeds: the dead-centre approach must not turn faster than the fastest test speed.</summary>
+    static void TestSlowSequenceApproach()
+    {
+        Console.WriteLine("Dead-centre approach limited to the fastest test speed");
+        var seq = new TestSequence();
+        seq.Steps.Add(new SequenceStep { Type = StepType.Cycles, SpeedMmS = 10, Count = 2 });
+        seq.Steps.Add(new SequenceStep { Type = StepType.Cycles, SpeedMmS = 20, Count = 2 });
+        var rig = new Rig(12.5, seq);                       // 25 mm stroke: static holds too
+        double maxHz = 0;
+        rig.Sim.StatusReceived += st => { if (rig.Runner.Phase != RunPhase.Running) maxHz = Math.Max(maxHz, st.VfdHz); };
+        rig.Runner.Start(); rig.Run(900);
+        double fastest = Kinematics.MotorHzForSpeed(20, 12.5, rig.Set);
+        Check(rig.Success == true && rig.Runner.Calibration.Static, "test completes with static holds (" + rig.Message + ")");
+        Check(rig.Log.Any(l => l.Contains("approach limited to")), "log says the approach is limited");
+        Check(maxHz <= fastest * 1.05 + 0.05, string.Format("drive never above {0:0.00} Hz outside the steps (max {1:0.00} Hz)", fastest, maxHz));
+        Check(rig.Sim.CrankAboveBdcMm < 1, "parked at BDC (" + rig.Sim.CrankAboveBdcMm.ToString("0.00") + " mm)");
     }
 
     /// <summary>Static or dynamic calibration chosen from the measured stroke (list + tolerance).</summary>

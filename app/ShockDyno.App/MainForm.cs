@@ -683,6 +683,13 @@ namespace ShockDyno.App
             }
             SendLimits();
             _parker = new BdcParker(_link, _set);
+            try
+            {
+                // never faster than the fastest speed of the sequence in the grid (nominal stroke)
+                double hz = SequenceFromGrid().Steps.Select(st => Kinematics.MotorHzForSpeed(st.SpeedMmS, _set.NominalAmplitudeMm, _set)).DefaultIfEmpty(0).Max();
+                if (hz > 0) _parker.MaxApproachHz = Math.Max(hz, _set.ParkMotorHz);
+            }
+            catch (FormatException) { }
             _parker.Log += Say;
             _parkClock.Reset();
             _parker.Start(0, false, double.NaN, double.NaN, 1);

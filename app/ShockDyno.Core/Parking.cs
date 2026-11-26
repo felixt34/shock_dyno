@@ -24,6 +24,8 @@ namespace ShockDyno.Core
         public double StoppedMm { get; private set; }
         /// <summary>Set before Start: stop at top dead centre instead (same logic on the mirrored position).</summary>
         public bool Top;
+        /// <summary>Set before Start: never approach faster than this (Hz), e.g. the fastest motor frequency of the test.</summary>
+        public double MaxApproachHz = double.PositiveInfinity;
         /// <summary>Ended by Cancel (fault, STOP), not by reaching the dead centre.</summary>
         public bool Cancelled { get; private set; }
         string Dc { get { return Top ? "top dead centre" : "bottom dead centre"; } }
@@ -56,6 +58,9 @@ namespace ShockDyno.Core
             else _det = new CycleDetector(_set.CycleHysteresisMm);
             _start = _parkStart = t;
             _fast = ApproachHz > ParkHz;
+            if (MaxApproachHz < _set.ParkApproachHz && _set.ParkApproachHz > ParkHz)
+                Say(_fast ? string.Format("    approach limited to {0:0.0#} Hz, the fastest speed of this test", ApproachHz)
+                          : string.Format("    no faster approach: the fastest speed of this test is {0:0.0#} Hz", MaxApproachHz));
             double hz = _fast ? ApproachHz : ParkHz;
             Say(!_known ? string.Format("Finding bottom dead centre (one or two turns at {0:0.0#} Hz)", hz)
                 : _fast ? string.Format("Going to {0}: {1:0.0#} Hz, then {2:0.0#} Hz for the last {3:0}°", Dc, ApproachHz, ParkHz, _set.ParkSlowAngleDeg)
@@ -65,7 +70,7 @@ namespace ShockDyno.Core
             else _link.MotorRun(hz);
         }
 
-        double ApproachHz { get { return Math.Min(_set.MaxMotorHz, _set.ParkApproachHz); } }
+        double ApproachHz { get { return Math.Min(Math.Min(_set.MaxMotorHz, _set.ParkApproachHz), MaxApproachHz); } }
 
         /// <summary>Two-speed approach: drop to the parking frequency for the last part of the turn.</summary>
         void SlowDown(string note)
@@ -225,6 +230,8 @@ namespace ShockDyno.Core
         double _refX = double.NaN;
 
         public DeadCentreHold(IDynoLink link, Settings set) { _link = link; _set = set; }
+        /// <summary>Approach speed limit passed to the parker (the fastest motor frequency of the test).</summary>
+        public double MaxApproachHz = double.PositiveInfinity;
 
         public void Start(double t, double bdcMm, double amplitudeMm, double speedFactor)
         {
@@ -236,7 +243,7 @@ namespace ShockDyno.Core
         void Go(double t, bool top, bool motorRunning)
         {
             _top = top; _holding = false; _refX = double.NaN; _dir = 0;
-            _parker = new BdcParker(_link, _set) { Top = top };
+            _parker = new BdcParker(_link, _set) { Top = top, MaxApproachHz = MaxApproachHz };
             _parker.Log += Say;
             _parker.Start(t, motorRunning, _bdc, _amp, _speedFactor);
         }

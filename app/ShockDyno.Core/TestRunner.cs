@@ -204,7 +204,7 @@ namespace ShockDyno.Core
         {
             Phase = RunPhase.Parking;
             CurrentStep = -1;
-            _parker = new BdcParker(_link, _set);
+            _parker = new BdcParker(_link, _set) { MaxApproachHz = FastestStepHz() };
             _parker.Log += Say;
             _parker.Start(_t, true, Calibration.BdcMm, Calibration.AmplitudeMm, _speedFactor);
             Raise(Progress);
@@ -252,7 +252,7 @@ namespace ShockDyno.Core
                                     byStroke == true && !_set.StaticCalibration ? " listed, but static calibration is switched off: dynamic" : ""));
                 if (useStatic)
                 {
-                    _static = new DeadCentreHold(_link, _set);
+                    _static = new DeadCentreHold(_link, _set) { MaxApproachHz = FastestStepHz() };
                     _static.Log += Say;
                     _static.Start(_t, Calibration.BdcMm, Calibration.AmplitudeMm, _speedFactor);
                     Raise(Progress);
@@ -318,6 +318,19 @@ namespace ShockDyno.Core
                 var hs = StepCompleted; if (hs != null) hs(r);
                 NextStep();
             }
+        }
+
+        /// <summary>
+        /// Highest motor frequency of the sequence (warm-up and measured steps): the dead-centre approach never turns
+        /// the crank faster than the test itself (small strokes, fragile dampers). Never below the parking frequency.
+        /// </summary>
+        double FastestStepHz()
+        {
+            double amp = Calibration != null ? Calibration.AmplitudeMm : _set.NominalAmplitudeMm;
+            double hz = 0;
+            foreach (SequenceStep s in _seq.Steps)
+                hz = Math.Max(hz, Kinematics.MotorHzForSpeed(s.SpeedMmS, amp, _set) / _speedFactor);
+            return hz > 0 ? Math.Max(hz, _set.ParkMotorHz) : double.PositiveInfinity;
         }
 
         /// <summary>Static readings done (or failed): use them, then start the steps from rest.</summary>
