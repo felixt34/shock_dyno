@@ -49,7 +49,7 @@ Every command except HEARTBEAT and READ_TEMP is answered with an ACK. (Firmware 
 
 | Id | Name | Payload after the id |
 |---|---|---|
-| `81` | STATUS (every 100 ms) | u8 state, u8 fault, u8 flags, u16 drive output frequency (0.01 Hz), u16 drive fault code, u16 dropped samples, u8 drive status word |
+| `81` | STATUS (every 100 ms) | u8 state, u8 fault, u8 flags, u16 drive output frequency (0.01 Hz), u16 drive fault code, u16 dropped samples, u8 drive status word, u16 points waiting in the sample queue, u16 bytes waiting in the serial transmit buffer (the last two: newer firmware; the app accepts the 10-byte form) |
 | `82` | ACK | u8 event id, u8 result |
 | `83` | TEMP | u8 ok (0 = sensor did not answer), i16 object (damper) temperature (0.01 °C), i16 sensor body temperature (0.01 °C) |
 

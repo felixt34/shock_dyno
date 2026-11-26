@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using Interlocked = System.Threading.Interlocked;
+using Volatile = System.Threading.Volatile;
 using System.Windows.Forms;
 using ShockDyno.Core;
 
@@ -54,7 +57,13 @@ namespace ShockDyno.App
         // controls
         readonly ComboBox _ports = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
         readonly Button _connect = new Button { Text = "Connect", Width = 90, Height = 26 };
-        readonly Label _state = Value(), _safety = Value(), _drive = Value(), _force = Value(), _position = Value(), _temp = Value();
+        readonly Label _state = Value(), _safety = Value(), _drive = Value(), _force = Value(), _position = Value(), _temp = Value(), _delay = Value();
+        // Samples and status from the link wait here and are processed in one go every 20 ms on the UI thread
+        // (instead of one posted message per packet); _inboxSamples = samples received but not processed yet.
+        readonly ConcurrentQueue<Action> _inbox = new ConcurrentQueue<Action>();
+        int _inboxSamples;
+        readonly System.Windows.Forms.Timer _drainTimer = new System.Windows.Forms.Timer { Interval = 20 };
+        double _sampleRate = 600; int _ratePoints; DateTime _rateSince = DateTime.Now, _delayLogged = DateTime.MinValue; int _droppedSeen;
         // IR thermometer: replies come back in order; the first _liveTempPending of them answer the live display
         int _liveTempPending;
         DateTime _liveTempAsked = DateTime.MinValue;
@@ -115,6 +124,8 @@ namespace ShockDyno.App
             _uiTimer.Tick += (s, e) => { if (_link != null) _link.KeepAlive(); UpdateUi(); };   // no KeepAlive = no heartbeat = motor stops
             ApplyScreenRefresh();
             _uiTimer.Start();
+            _drainTimer.Tick += (s, e) => Drain();
+            _drainTimer.Start();
             if (selfTest != null) Shown += (s, e) => { _ports.SelectedItem = SimulatorPort; ToggleConnection(); StartTest(); };
         }
 
@@ -148,7 +159,7 @@ namespace ShockDyno.App
             int top = 4;
             foreach (GroupBox g in new[] {
                 Group("Connection", Row(_ports, _connect)),
-                Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position), Pair("Damper temp.", _temp),
+                Group("Machine", Pair("State", _state), Pair("Safety circuit", _safety), Pair("Drive", _drive), Pair("Force", _force), Pair("Position", _position), Pair("Damper temp.", _temp), Pair("Data delay", _delay),
                       Row(_start, _stop), Row(_tare, _clear), Row(_findBdc)),
                 Group("Test", Caption("Name (damper, settings)"), _name, Caption("Notes"), _notes),
                 Group("Sequence", _grid, Row(load, save, def)),
@@ -308,6 +319,7 @@ namespace ShockDyno.App
 
         void Say(string msg)
         {
+            if (_log.Items.Count > 5000) { _log.BeginUpdate(); for (int k = 0; k < 1000; k++) _log.Items.RemoveAt(0); _log.EndUpdate(); }
             _log.Items.Add(DateTime.Now.ToString("HH:mm:ss") + "  " + msg);
             _log.TopIndex = Math.Max(0, _log.Items.Count - 1);
             _statusText.Text = msg;
@@ -334,8 +346,12 @@ namespace ShockDyno.App
                 IDynoLink link = port == SimulatorPort
                     ? (IDynoLink)new SimulatedDynoLink(_set) { TimeScale = _selfTest != null ? 40 : 1 }
                     : new SerialDynoLink(port);
-                link.SamplesReceived += s => Ui(() => OnSamples(link, s));
-                link.StatusReceived += st => Ui(() => OnStatus(link, st));
+                link.SamplesReceived += s =>
+                {
+                    Interlocked.Add(ref _inboxSamples, s.Length);
+                    _inbox.Enqueue(() => { Interlocked.Add(ref _inboxSamples, -s.Length); OnSamples(link, s); });
+                };
+                link.StatusReceived += st => _inbox.Enqueue(() => OnStatus(link, st));
                 link.AckReceived += (id, r) => Ui(() =>
                 {
                     if (link != _link) return;
@@ -394,9 +410,43 @@ namespace ShockDyno.App
         }
 
         // ------------------------------------------------------------------ incoming data
+        /// <summary>Processes everything received so far (what arrives meanwhile waits for the next tick).</summary>
+        void Drain()
+        {
+            int n = _inbox.Count;
+            Action a;
+            while (n-- > 0 && _inbox.TryDequeue(out a)) a();
+        }
+
+        /// <summary>
+        /// How far the display lags the machine: samples received but not yet processed by the app, plus data the
+        /// ESP32 has measured but not sent yet (its queue and serial buffer). Should stay at a few hundredths of a second.
+        /// </summary>
+        string DelayText(out bool bad)
+        {
+            double app = Math.Max(0, Volatile.Read(ref _inboxSamples)) / _sampleRate;
+            double esp = _status != null && _status.QueuedPoints >= 0 ? (_status.QueuedPoints + _status.TxPendingBytes / 10.5) / _sampleRate : double.NaN;
+            double total = app + (double.IsNaN(esp) ? 0 : esp);
+            bad = total > 0.3 || (_status != null && _status.Dropped > 0);
+            string s = string.Format("{0:0.00} s", total);
+            if (total > 0.3) s += string.Format(" (ESP32 {0}, app {1:0.00} s)", double.IsNaN(esp) ? "?" : esp.ToString("0.00") + " s", app);
+            if (_status != null && _status.Dropped > 0) s += string.Format("  {0} dropped", _status.Dropped);
+            if (total > 0.5 && (DateTime.Now - _delayLogged).TotalSeconds > 30)
+            {
+                _delayLogged = DateTime.Now;
+                Say(string.Format("Data delay {0:0.00} s: ESP32 queue + serial buffer {1}, waiting in the app {2:0.00} s", total, double.IsNaN(esp) ? "unknown (old firmware)" : esp.ToString("0.00") + " s", app));
+            }
+            if (_status != null && _status.Dropped > _droppedSeen) { Say(string.Format("The ESP32 dropped {0} samples (queue full: the data was not sent fast enough)", _status.Dropped - _droppedSeen)); }
+            if (_status != null) _droppedSeen = _status.Dropped;
+            return s;
+        }
+
         void OnSamples(IDynoLink from, RawSample[] samples)
         {
             if (from != _link) return;
+            _ratePoints += samples.Length;
+            double el = (DateTime.Now - _rateSince).TotalSeconds;
+            if (el >= 2) { if (_ratePoints > 0) _sampleRate = Math.Max(50, _ratePoints / el); _ratePoints = 0; _rateSince = DateTime.Now; }
             foreach (RawSample s in samples)
             {
                 _recent.Enqueue(s); _sumF += s.Force; _sumP += s.Position;
@@ -512,6 +562,9 @@ namespace ShockDyno.App
             PollTemperature(running);
             _temp.Text = connected ? TempText() : "-";
             _temp.ForeColor = _lastTemp != null && _lastTemp.Value.Ok ? Color.Black : Color.Gray;
+            bool delayBad = false;
+            _delay.Text = connected ? DelayText(out delayBad) : "-";
+            _delay.ForeColor = delayBad ? Color.Firebrick : Color.Black;
             bool parking = _parker != null && !_parker.Done;
             _start.Enabled = connected && !running && !parking && _status != null && _status.State != MachineState.Fault;
             _findBdc.Enabled = _start.Enabled;
@@ -636,6 +689,25 @@ namespace ShockDyno.App
             UpdateUi();
         }
 
+        /// <summary>Keeps the min and max of each of `bins` equal slices, in time order. Short series are returned as they are.</summary>
+        static void MinMaxDecimate(double[] t, double[] y, int bins, out double[] ot, out double[] oy)
+        {
+            int n = t.Length;
+            if (n <= 2 * bins) { ot = t; oy = y; return; }
+            var rt = new List<double>(2 * bins + 2); var ry = new List<double>(2 * bins + 2);
+            for (int b = 0; b < bins; b++)
+            {
+                int i0 = (int)((long)n * b / bins), i1 = (int)((long)n * (b + 1) / bins);
+                if (i1 <= i0) continue;
+                int iMin = i0, iMax = i0;
+                for (int i = i0 + 1; i < i1; i++) { if (y[i] < y[iMin]) iMin = i; if (y[i] > y[iMax]) iMax = i; }
+                int a = Math.Min(iMin, iMax), c = Math.Max(iMin, iMax);
+                rt.Add(t[a]); ry.Add(y[a]);
+                if (c != a) { rt.Add(t[c]); ry.Add(y[c]); }
+            }
+            ot = rt.ToArray(); oy = ry.ToArray();
+        }
+
         void DrawLiveSignals()
         {
             UnitSystem u = _set.Units;
@@ -658,8 +730,13 @@ namespace ShockDyno.App
                 }
                 i++;
             }
-            _plotLiveF.Series.Add(new PlotSeries { X = t, Y = f, Color = PlotControl.Palette[1], Width = 1f });
-            _plotLiveX.Series.Add(new PlotSeries { X = t, Y = x, Color = PlotControl.Palette[0], Width = 1f });
+            // Drawn with at most ~2 points per pixel column (min and max of each bin, so noise peaks stay visible):
+            // drawing 6000 antialiased points twice every refresh kept the UI thread busy for nothing.
+            double[] dt, df, dx2, dx;
+            MinMaxDecimate(t, f, 900, out dt, out df);
+            MinMaxDecimate(t, x, 900, out dx2, out dx);
+            _plotLiveF.Series.Add(new PlotSeries { X = dt, Y = df, Color = PlotControl.Palette[1], Width = 1f });
+            _plotLiveX.Series.Add(new PlotSeries { X = dx2, Y = dx, Color = PlotControl.Palette[0], Width = 1f });
             _plotLiveF.Title = string.Format("Force {0:0.0} {1}  (last 1 s: mean {2:0.0}, noise {3:0.0} {1} peak to peak)", f[n - 1], Units.ForceUnit(u), fSum / n1, fMax - fMin);
             _plotLiveX.Title = string.Format("Position {0:0.00} {1}  (last 1 s: mean {2:0.00}, noise {3:0.000} {1} peak to peak)", x[n - 1], Units.LengthUnit(u), xSum / n1, xMax - xMin);
             _plotLiveF.Invalidate(); _plotLiveX.Invalidate();

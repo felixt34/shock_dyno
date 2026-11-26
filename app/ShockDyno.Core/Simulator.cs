@@ -214,7 +214,7 @@ namespace ShockDyno.Core
                 _out.Add(Packet.BuildStatus(new DynoStatus
                 {
                     State = _state, Fault = _fault, SafetyOk = SafetyOk, AcqOn = _acqOn, LimitsSet = _limitsSet,
-                    VfdOk = true, AdcOk = true, VfdHz = _hz > 0 ? _hz + SvcSlipHzPerKN * Math.Abs(_dyn) / 1000 : 0, VfdStatus = _state == MachineState.Running ? 1 : 3,
+                    QueuedPoints = 0, TxPendingBytes = 0, VfdOk = true, AdcOk = true, VfdHz = _hz > 0 ? _hz + SvcSlipHzPerKN * Math.Abs(_dyn) / 1000 : 0, VfdStatus = _state == MachineState.Running ? 1 : 3,
                 }));
             }
             Flush();

@@ -3,6 +3,8 @@
 
 QueueHandle_t sampleQueue = nullptr;
 
+const int TX_BUFFER_SIZE = 4096;
+
 namespace {
 
 proto::Decoder decoder;
@@ -30,6 +32,9 @@ void sendStatus() {
   proto::putU16(p + 6, sh.vfdFault);
   proto::putU16(p + 8, sh.dropped);
   p[10] = (uint8_t)sh.vfdStatus;
+  proto::putU16(p + 11, (uint16_t)uxQueueMessagesWaiting(sampleQueue));
+  int txFree = Serial.availableForWrite();
+  proto::putU16(p + 13, (uint16_t)(txFree >= 0 && txFree < TX_BUFFER_SIZE ? TX_BUFFER_SIZE - txFree : 0));
   sendEvent(p, sizeof(p));
 }
 
@@ -86,20 +91,25 @@ void taskMain(void*) {
         if (decoder.type() == proto::TYPE_EVENT) handleEvent(decoder.payload(), decoder.length());
       }
     }
-    Sample s;
-    while (xQueueReceive(sampleQueue, &s, 0) == pdTRUE) {
-      uint8_t* p = data + nPoints * proto::POINT_SIZE;
-      proto::putU32(p, s.t_us);
-      proto::putI24(p + 4, s.force);
-      proto::putI24(p + 7, s.position);
-      if (++nPoints >= POINTS_PER_PACKET) break;
-    }
+    // Send everything waiting (several packets if the queue has built up), so the queue never grows.
     uint32_t now = millis();
-    if (nPoints >= POINTS_PER_PACKET || (nPoints > 0 && now - lastFlush >= PACKET_FLUSH_MS)) {
-      size_t n = proto::encode(proto::TYPE_DATA, data, (uint8_t)(nPoints * proto::POINT_SIZE), txBuf);
-      Serial.write(txBuf, n);
-      nPoints = 0;
-      lastFlush = now;
+    for (int k = 0; k < 16; k++) {
+      Sample s;
+      while (nPoints < POINTS_PER_PACKET && xQueueReceive(sampleQueue, &s, 0) == pdTRUE) {
+        uint8_t* p = data + nPoints * proto::POINT_SIZE;
+        proto::putU32(p, s.t_us);
+        proto::putI24(p + 4, s.force);
+        proto::putI24(p + 7, s.position);
+        nPoints++;
+      }
+      now = millis();
+      if (nPoints >= POINTS_PER_PACKET || (nPoints > 0 && now - lastFlush >= PACKET_FLUSH_MS)) {
+        size_t n = proto::encode(proto::TYPE_DATA, data, (uint8_t)(nPoints * proto::POINT_SIZE), txBuf);
+        Serial.write(txBuf, n);
+        nPoints = 0;
+        lastFlush = now;
+      }
+      if (nPoints > 0 || uxQueueMessagesWaiting(sampleQueue) < POINTS_PER_PACKET) break;   // nothing more to send now
     }
     if (sh.irDone) {
       sh.irDone = false;
@@ -120,7 +130,7 @@ void taskMain(void*) {
 
 void commBegin() {
   sampleQueue = xQueueCreate(SAMPLE_QUEUE_LEN, sizeof(Sample));
-  Serial.setTxBufferSize(4096);
+  Serial.setTxBufferSize(TX_BUFFER_SIZE);
   Serial.setRxBufferSize(1024);
   Serial.begin(PC_BAUD);
   xTaskCreatePinnedToCore(taskMain, "comm", 4096, nullptr, 8, nullptr, 0);

@@ -47,6 +47,8 @@ namespace ShockDyno.Core
         public bool SafetyOk, AcqOn, LimitsSet, VfdOk, AdcOk;
         public double VfdHz;
         public int VfdFault, Dropped, VfdStatus;
+        /// <summary>Data waiting in the ESP32 (points in its queue, bytes in its serial buffer); -1 = older firmware.</summary>
+        public int QueuedPoints = -1, TxPendingBytes = -1;
 
         public static string Describe(FaultCode f)
         {
@@ -196,6 +198,8 @@ namespace ShockDyno.Core
                 VfdFault = BitConverter.ToUInt16(p, 6),
                 Dropped = BitConverter.ToUInt16(p, 8),
                 VfdStatus = p[10],
+                QueuedPoints = p.Length >= 15 ? BitConverter.ToUInt16(p, 11) : -1,
+                TxPendingBytes = p.Length >= 15 ? BitConverter.ToUInt16(p, 13) : -1,
             };
         }
 
@@ -216,7 +220,7 @@ namespace ShockDyno.Core
 
         public static byte[] BuildStatus(DynoStatus s)
         {
-            var p = new byte[11];
+            var p = new byte[15];
             p[0] = (byte)EventId.Status;
             p[1] = (byte)s.State; p[2] = (byte)s.Fault;
             p[3] = (byte)((s.SafetyOk ? 1 : 0) | (s.AcqOn ? 2 : 0) | (s.LimitsSet ? 4 : 0) | (s.VfdOk ? 8 : 0) | (s.AdcOk ? 16 : 0));
@@ -224,6 +228,8 @@ namespace ShockDyno.Core
             Buffer.BlockCopy(BitConverter.GetBytes((ushort)s.VfdFault), 0, p, 6, 2);
             Buffer.BlockCopy(BitConverter.GetBytes((ushort)s.Dropped), 0, p, 8, 2);
             p[10] = (byte)s.VfdStatus;
+            Buffer.BlockCopy(BitConverter.GetBytes((ushort)Math.Max(0, s.QueuedPoints)), 0, p, 11, 2);
+            Buffer.BlockCopy(BitConverter.GetBytes((ushort)Math.Max(0, s.TxPendingBytes)), 0, p, 13, 2);
             return Encode(TypeEvent, p);
         }
     }
