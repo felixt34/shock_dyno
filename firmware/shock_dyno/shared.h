@@ -15,7 +15,8 @@ struct Shared {
   volatile bool     vfdResetPending = false;
   volatile uint16_t freqCmd = 0;              // 0.01 Hz
   volatile uint32_t lastPcMs = 0;             // last valid packet from the PC
-  volatile bool     drivePaused = false;      // PC lost: no Modbus traffic, so the drive's comm timeout trips it
+  volatile bool     drivePaused = false;
+  volatile uint16_t missedEdges = 0;          // single-board mode: DRDY edges found by polling (interrupt missed)      // PC lost: no Modbus traffic, so the drive's comm timeout trips it
   // force limits (raw counts)
   volatile bool     limitsSet = false;
   volatile int32_t  limitLo = 0, limitHi = 0;

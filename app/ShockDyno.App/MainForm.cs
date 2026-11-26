@@ -63,7 +63,7 @@ namespace ShockDyno.App
         readonly ConcurrentQueue<Action> _inbox = new ConcurrentQueue<Action>();
         int _inboxSamples;
         readonly System.Windows.Forms.Timer _drainTimer = new System.Windows.Forms.Timer { Interval = 20 };
-        double _sampleRate = 600; int _ratePoints; DateTime _rateSince = DateTime.Now, _delayLogged = DateTime.MinValue; int _droppedSeen;
+        double _sampleRate = 600; int _ratePoints; DateTime _rateSince = DateTime.Now, _delayLogged = DateTime.MinValue; int _droppedSeen, _missedSeen = -1; DateTime _missedLogged = DateTime.MinValue;
         // IR thermometer: replies come back in order; the first _liveTempPending of them answer the live display
         int _liveTempPending;
         DateTime _liveTempAsked = DateTime.MinValue;
@@ -439,6 +439,15 @@ namespace ShockDyno.App
             }
             if (_status != null && _status.Dropped > _droppedSeen) { Say(string.Format("The ESP32 dropped {0} samples (queue full: the data was not sent fast enough)", _status.Dropped - _droppedSeen)); }
             if (_status != null) _droppedSeen = _status.Dropped;
+            if (_status != null && _status.MissedEdges >= 0)
+            {
+                if (_missedSeen >= 0 && _status.MissedEdges != _missedSeen && (DateTime.Now - _missedLogged).TotalSeconds > 10)
+                {
+                    _missedLogged = DateTime.Now;
+                    Say(string.Format("ADC: {0} DRDY interrupts missed so far (found by polling)", _status.MissedEdges));
+                }
+                _missedSeen = _status.MissedEdges;
+            }
             return s;
         }
 
@@ -729,14 +738,14 @@ namespace ShockDyno.App
             if (n == 0) { _plotLiveF.Title = "Force: no data"; _plotLiveX.Title = "Position: no data"; _plotLiveF.Invalidate(); _plotLiveX.Invalidate(); return; }
             var t = new double[n]; var f = new double[n]; var x = new double[n];
             int i = 0; double tEnd = _liveT;
-            double fMin = double.MaxValue, fMax = double.MinValue, xMin = double.MaxValue, xMax = double.MinValue, fSum = 0, xSum = 0; int n1 = 0;
+            double fMin = double.MaxValue, fMax = double.MinValue, xMin = double.MaxValue, xMax = double.MinValue, fSum = 0, xSum = 0, fSq = 0, xSq = 0; int n1 = 0;
             foreach (double[] r in _liveBuf)
             {
                 t[i] = r[0] - tEnd; f[i] = Units.Force(r[1], u); x[i] = Units.Length(r[2], u);
                 if (r[0] >= tEnd - 1)          // statistics over the last second
                 {
                     fMin = Math.Min(fMin, f[i]); fMax = Math.Max(fMax, f[i]); xMin = Math.Min(xMin, x[i]); xMax = Math.Max(xMax, x[i]);
-                    fSum += f[i]; xSum += x[i]; n1++;
+                    fSum += f[i]; xSum += x[i]; fSq += f[i] * f[i]; xSq += x[i] * x[i]; n1++;
                 }
                 i++;
             }
@@ -747,8 +756,12 @@ namespace ShockDyno.App
             MinMaxDecimate(t, x, 900, out dx2, out dx);
             _plotLiveF.Series.Add(new PlotSeries { X = dt, Y = df, Color = PlotControl.Palette[1], Width = 1f });
             _plotLiveX.Series.Add(new PlotSeries { X = dx2, Y = dx, Color = PlotControl.Palette[0], Width = 1f });
-            _plotLiveF.Title = string.Format("Force {0:0.0} {1}  (last 1 s: mean {2:0.0}, noise {3:0.0} {1} peak to peak)", f[n - 1], Units.ForceUnit(u), fSum / n1, fMax - fMin);
-            _plotLiveX.Title = string.Format("Position {0:0.00} {1}  (last 1 s: mean {2:0.00}, noise {3:0.000} {1} peak to peak)", x[n - 1], Units.LengthUnit(u), xSum / n1, xMax - xMin);
+            // Peak to peak is set by the worst single sample; the standard deviation by the noise as a whole. A p-p
+            // far above ~6 x the std points to occasional spikes (outliers), not to a noisier signal.
+            double fStd = Math.Sqrt(Math.Max(0, fSq / n1 - (fSum / n1) * (fSum / n1))), xStd = Math.Sqrt(Math.Max(0, xSq / n1 - (xSum / n1) * (xSum / n1)));
+            string missed = _status != null && _status.MissedEdges > 0 ? string.Format(",  {0} missed DRDY", _status.MissedEdges) : "";
+            _plotLiveF.Title = string.Format("Force {0:0.0} {1}  (last 1 s: mean {2:0.0}, std {3:0.00}, peak to peak {4:0.0} {1}{5})", f[n - 1], Units.ForceUnit(u), fSum / n1, fStd, fMax - fMin, missed);
+            _plotLiveX.Title = string.Format("Position {0:0.00} {1}  (last 1 s: mean {2:0.00}, std {3:0.0000}, peak to peak {4:0.000} {1})", x[n - 1], Units.LengthUnit(u), xSum / n1, xStd, xMax - xMin);
             _plotLiveF.Invalidate(); _plotLiveX.Invalidate();
         }
 

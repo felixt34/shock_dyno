@@ -49,6 +49,8 @@ namespace ShockDyno.Core
         public int VfdFault, Dropped, VfdStatus;
         /// <summary>Data waiting in the ESP32 (points in its queue, bytes in its serial buffer); -1 = older firmware.</summary>
         public int QueuedPoints = -1, TxPendingBytes = -1;
+        /// <summary>Single-board mode: DRDY edges the ESP32 had to find by polling (interrupt missed); -1 = older firmware.</summary>
+        public int MissedEdges = -1;
 
         public static string Describe(FaultCode f)
         {
@@ -200,6 +202,7 @@ namespace ShockDyno.Core
                 VfdStatus = p[10],
                 QueuedPoints = p.Length >= 15 ? BitConverter.ToUInt16(p, 11) : -1,
                 TxPendingBytes = p.Length >= 15 ? BitConverter.ToUInt16(p, 13) : -1,
+                MissedEdges = p.Length >= 17 ? BitConverter.ToUInt16(p, 15) : -1,
             };
         }
 
@@ -220,7 +223,7 @@ namespace ShockDyno.Core
 
         public static byte[] BuildStatus(DynoStatus s)
         {
-            var p = new byte[15];
+            var p = new byte[17];
             p[0] = (byte)EventId.Status;
             p[1] = (byte)s.State; p[2] = (byte)s.Fault;
             p[3] = (byte)((s.SafetyOk ? 1 : 0) | (s.AcqOn ? 2 : 0) | (s.LimitsSet ? 4 : 0) | (s.VfdOk ? 8 : 0) | (s.AdcOk ? 16 : 0));
@@ -230,6 +233,7 @@ namespace ShockDyno.Core
             p[10] = (byte)s.VfdStatus;
             Buffer.BlockCopy(BitConverter.GetBytes((ushort)Math.Max(0, s.QueuedPoints)), 0, p, 11, 2);
             Buffer.BlockCopy(BitConverter.GetBytes((ushort)Math.Max(0, s.TxPendingBytes)), 0, p, 13, 2);
+            Buffer.BlockCopy(BitConverter.GetBytes((ushort)Math.Max(0, s.MissedEdges)), 0, p, 15, 2);
             return Encode(TypeEvent, p);
         }
     }

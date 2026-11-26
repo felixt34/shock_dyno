@@ -98,6 +98,8 @@
 // a fault, as when the ESP32 loses power. Communication resumes when the application is back; clear the drive
 // fault with "Clear fault". Longer than HEARTBEAT_TIMEOUT_MS so a short UI freeze while idle does not trip the drive.
 #define PC_LOST_DRIVE_OFF_MS  3000
+// Single-board mode: DRDY found low by polling (interrupt missed) only counts after this long (us).
+#define ADC_MISSED_EDGE_US    1500
 #define ADC_TIMEOUT_MS        100       // motor stops if samples stop arriving
 #define FORCE_LIMIT_SAMPLES   3         // consecutive samples beyond the limit before tripping
 #define VFD_COMM_FAIL_LIMIT   5         // consecutive Modbus failures before "VFD comm lost"

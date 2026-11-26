@@ -46,7 +46,7 @@ const uint8_t FLAG_SAFETY_OK = 0x01, FLAG_ACQ_ON = 0x02, FLAG_LIMITS_SET = 0x04,
 // STATUS payload after the event id (little endian): 10 bytes
 //   u8 state, u8 fault, u8 flags, u16 vfdFreq(0.01 Hz), u16 vfdFault, u16 dropped, u8 vfdStatus,
 //   u16 queued points, u16 serial TX bytes pending (both: how far the data sent lags the measurement)
-const size_t STATUS_SIZE = 14;   // + u16 samples waiting in the queue, u16 bytes waiting in the serial transmit buffer
+const size_t STATUS_SIZE = 16;   // + u16 missed DRDY edges   // + u16 samples waiting in the queue, u16 bytes waiting in the serial transmit buffer
 
 uint8_t crc8(const uint8_t* data, size_t len, uint8_t crc = 0);
 

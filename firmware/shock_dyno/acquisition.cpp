@@ -103,7 +103,14 @@ bool convertOne(uint8_t mux, uint8_t adcon, uint32_t& t, int32_t& v) {
   uint32_t t0 = micros();
   for (;;) {
     if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(2)) == pdTRUE && (bits & BIT_FORCE)) { t = isrForceUs; break; }
-    if (digitalRead(PIN_ADC1_DRDY) == LOW && micros() - t0 > 300) { t = (uint32_t)esp_timer_get_time(); break; }   // edge missed
+    // Edge missed: only trusted once a fresh conversion must be done (settling after a restart is 0.68 ms at
+    // 2000 SPS). Earlier, DRDY can still be low from the previous conversion, and reading then would give the
+    // value of the other input (a force reading in the position trace, or the reverse).
+    if (micros() - t0 > ADC_MISSED_EDGE_US && digitalRead(PIN_ADC1_DRDY) == LOW) {
+      t = (uint32_t)esp_timer_get_time();
+      sh.missedEdges = sh.missedEdges + 1;
+      break;
+    }
     if (micros() - t0 > ADC_CONVERSION_TIMEOUT_US) return false;
   }
   v = adcForce.readData();

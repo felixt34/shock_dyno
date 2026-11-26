@@ -35,6 +35,7 @@ void sendStatus() {
   proto::putU16(p + 11, (uint16_t)uxQueueMessagesWaiting(sampleQueue));
   int txFree = Serial.availableForWrite();
   proto::putU16(p + 13, (uint16_t)(txFree >= 0 && txFree < TX_BUFFER_SIZE ? TX_BUFFER_SIZE - txFree : 0));
+  proto::putU16(p + 15, sh.missedEdges);
   sendEvent(p, sizeof(p));
 }
 
